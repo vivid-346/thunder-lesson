@@ -34,7 +34,7 @@ ES Modules を使うため `file://` で直接開くと動きません。CDN（c
    - センサー：ヘソ、電チュー、アタッカー、ワープ（確率 `WARP_P`）、アウト
    - `window.__sim(power, n, {den, att})` で入賞率をヘッドレス計測できます
 5. Three.js シーン：見た目はユーザー提供の筐体画像（`CAB_IMG`、webpをbase64で埋め込み）をそのまま平面に貼り、その上に液晶（画像の液晶位置に重ねたCanvas）、玉、ランプの発光（`lampSprites`）、ヘソ・電チュー・アタッカー・PUSHボタンの光、持ち玉・残高表示、クリック判定（`CAB.pickables`）、召喚・群予告・パーティクルを重ねています。
-6. 液晶：1024×768 の Canvas を毎フレーム描画してテクスチャ化。リール `reels` / `stopReel()`、背景テーマ `L.bg`（normal / reach / sp / rush / jackpot）、テロップ `caption()`、保留アイコン
+6. 液晶：1024×800 の Canvas（実機風：光線 `RAYS` のプリレンダー、金属調文字 `fancyText`、立体図柄スプライト `symSprite`、宝石保留 `gem`、ガラス反射レイヤー `GLASS`） を毎フレーム描画してテクスチャ化。リール `reels` / `stopReel()`、背景テーマ `L.bg`（normal / reach / sp / rush / jackpot）、テロップ `caption()`、保留アイコン
 7. ゲーム状態・抽選：`state`, `stats`, `lottery()`, `decideSymbols()`, 入賞処理 `onEntry()`, 先読み演出 `onHoldEffect()`
 8. 演出ヘルパー：カメラ揺れ `shakeCam`、CSS揺れ `cssShake`、`edgeFlash`、`whiteFlash`、大文字テロップ `showBig`、PUSHボタン待ち `waitPush`、枠ランプ
 9. 変動シーケンス（async）：`runSpin` → `groupNotice` / `spReach` → `puchun` → `bigHit` → `runRounds` → 昇格演出 → RUSH、`endSpin`（ST終了処理）

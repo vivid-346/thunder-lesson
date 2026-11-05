@@ -728,7 +728,7 @@ function updateGroup(dt) {
 /* =========================================================
  *  6. 液晶（2D Canvas → テクスチャ）
  * ========================================================= */
-const SYM = { 1: ['#3ad8ff', '#04286a'], 2: ['#4dff7a', '#035018'], 3: ['#ff2a3a', '#5a0008'], 4: ['#4a7bff', '#081660'], 5: ['#ff8a1a', '#5a2000'], 6: ['#c25bff', '#30085a'], 7: ['#ff1a2a', '#600008'], 8: ['#ff5ac8', '#5a0640'], 9: ['#a6ff2a', '#2a4a00'] };
+const SYM = { 1: ['#3ad8ff', '#04286a'], 2: ['#3dff6a', '#034a14'], 3: ['#ff2a3a', '#4a0006'], 4: ['#4a7bff', '#071450'], 5: ['#ff8a1a', '#4a1800'], 6: ['#b65bff', '#28064a'], 7: ['#ff1a2a', '#500006'], 8: ['#ff4ab8', '#4a0436'], 9: ['#9cff2a', '#203c00'] };
 const reels = [0, 1, 2].map(() => ({ pos: Math.random() * 9, speed: 0, state: 'stop', from: 0, to: 0, t: 0, dur: 0.4 }));
 const symAt = idx => (((Math.round(idx) % 9) + 9) % 9) + 1;
 function reelsStart() { reels.forEach((r, i) => { r.state = 'spin'; r.speed = 22 + i; }); }
@@ -747,127 +747,278 @@ function updateReels(dt) {
   });
 }
 const L = { bg: 'normal', captions: [], push: null, round: null, black: false, hit: false, reachGlow: false, shakeT: 0, flash: 0 };
-function caption(text, o = {}) { L.captions.push({ text, t0: now, dur: o.dur ?? 1.6, color: o.color || '#fff', size: o.size || 96, y: o.y ?? 384, stroke: o.stroke || '#1b0230', sub: o.sub || '' }); }
-
-function drawRays(c, cx, cy, n, rot, colorFn, r = 1400) {
-  for (let i = 0; i < n; i++) {
-    const a = rot + i / n * Math.PI * 2, w = Math.PI / n;
-    c.fillStyle = colorFn(i); c.beginPath(); c.moveTo(cx, cy); c.arc(cx, cy, r, a - w / 2, a + w / 2); c.closePath(); c.fill();
-  }
+function styleOf(col) {
+  if (!col) return 'silver'; if (col === 'rainbow') return 'rainbow'; const c = col.toLowerCase();
+  if (/^#ff[d-e]/.test(c)) return 'gold'; if (/^#ff[0-6]/.test(c)) return 'red'; if (c === '#3dff7a' || c === '#4dff6a') return 'green';
+  if (/^#(7f|3a|55|d0)/.test(c)) return 'blue'; return 'silver';
 }
+const rt = () => performance.now() / 1000;
+function caption(text, o = {}) {
+  const tn = rt(); L.captions.forEach(k => { k.dur = Math.min(k.dur, tn - k.t0 + 0.12); });
+  L.captions.push({ text, t0: tn, dur: o.dur ?? 1.6, style: o.style || styleOf(o.color), size: o.size || 96, y: o.y ?? 384, sub: o.sub || '' });
+}
+
+/* ---- 金属調の文字 ---- */
+const MET = {
+  gold: { stops: ['#fffbe0', '#ffe066', '#d99a1c', '#7a4300', '#ffd75a', '#fff3c0'], rim: '#2a0e00', glow: 'rgba(255,160,30,.85)', edge: 'goldDark' },
+  goldDark: { stops: ['#fff0b0', '#c88a1a', '#6a3a00', '#3a1c00', '#b8801a', '#ffe080'] },
+  red: { stops: ['#ffd8d0', '#ff4a3a', '#c8000e', '#4a0004', '#ff2a24', '#ffb4a0'], rim: '#200002', glow: 'rgba(255,20,30,.9)', edge: 'gold' },
+  blue: { stops: ['#eafcff', '#6ad8ff', '#1a6ad8', '#06205a', '#4ab8ff', '#d4f4ff'], rim: '#020a26', glow: 'rgba(60,170,255,.85)', edge: 'silver' },
+  green: { stops: ['#eaffea', '#6aff7a', '#14a830', '#043a10', '#3ae05a', '#d0ffd8'], rim: '#021804', glow: 'rgba(60,255,90,.8)', edge: 'gold' },
+  silver: { stops: ['#ffffff', '#eef1f6', '#a2abb8', '#3a404a', '#d8dde4', '#ffffff'], rim: '#0c0e16', glow: 'rgba(190,210,255,.7)', edge: 'goldDark' },
+};
+const MET_POS = [0, 0.24, 0.49, 0.51, 0.78, 1];
+function metalGrad(c, y0, y1, stops) { const g = c.createLinearGradient(0, y0, 0, y1); stops.forEach((s, i) => g.addColorStop(MET_POS[i], s)); return g; }
+function fancyText(c, text, x, y, size, style = 'gold', t = now) {
+  c.save(); c.translate(x, y); c.transform(1, 0, -0.08, 1, 0, 0);
+  c.font = `${size}px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+  const h = size * 0.56, M = MET[style] || MET.gold, E = MET[(M && M.edge) || 'gold'];
+  c.shadowColor = 'rgba(0,0,0,.85)'; c.shadowBlur = size * 0.2; c.shadowOffsetY = size * 0.07;
+  c.lineWidth = size * 0.22; c.strokeStyle = M.rim || '#000'; c.strokeText(text, 0, 0);
+  c.shadowColor = 'transparent'; c.shadowOffsetY = 0;
+  c.lineWidth = size * 0.12; c.strokeStyle = metalGrad(c, -h, h, E.stops); c.strokeText(text, 0, 0);
+  c.lineWidth = size * 0.035; c.strokeStyle = M.rim || '#000'; c.strokeText(text, 0, 0);
+  let fill;
+  if (style === 'rainbow') { fill = c.createLinearGradient(-size * 2.5, 0, size * 2.5, 0); for (let i = 0; i <= 8; i++) fill.addColorStop(i / 8, `hsl(${(i * 45 + t * 240) % 360},100%,62%)`); }
+  else fill = metalGrad(c, -h, h, M.stops);
+  c.shadowColor = M.glow || 'rgba(255,255,255,.8)'; c.shadowBlur = size * 0.3; c.fillStyle = fill; c.fillText(text, 0, 0); c.shadowBlur = 0;
+  // 上半分のツヤ
+  c.globalCompositeOperation = 'lighter'; c.globalAlpha = 0.18; c.fillStyle = '#fff'; c.save(); c.beginPath(); c.rect(-size * 8, -h, size * 16, h * 0.75); c.clip(); c.fillText(text, 0, 0); c.restore();
+  c.restore();
+}
+
+/* ---- 図柄（キャッシュしたスプライト） ---- */
+const symCache = {};
+function symSprite(n) {
+  if (symCache[n]) return symCache[n];
+  const W = 380, H = 400, cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
+  const [col, dk] = SYM[n], txt = String(n), tf = [1, 0, -0.16, 1, W / 2 + 14, H / 2 + 10];
+  const setup = ctx => { ctx.setTransform(...tf); ctx.font = `310px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round'; };
+  setup(g);
+  g.shadowColor = 'rgba(0,0,0,.9)'; g.shadowBlur = 30; g.shadowOffsetY = 14; g.fillStyle = '#000'; g.fillText(txt, 6, 10); g.shadowColor = 'transparent';
+  for (let i = 12; i > 0; i--) { g.fillStyle = i > 9 ? '#120002' : dk; g.globalAlpha = 1; g.fillText(txt, i * 0.9, i * 1.4); } // 立体の厚み
+  g.lineWidth = 34; g.strokeStyle = '#140002'; g.strokeText(txt, 0, 0);
+  g.lineWidth = 22; g.strokeStyle = metalGrad(g, -160, 160, MET.gold.stops); g.strokeText(txt, 0, 0);
+  g.lineWidth = 6; g.strokeStyle = '#3a1400'; g.strokeText(txt, 0, 0);
+  // 本体（宝石のような面とツヤ）
+  const b = document.createElement('canvas'); b.width = W; b.height = H; const bg = b.getContext('2d'); setup(bg);
+  const body = bg.createLinearGradient(0, -165, 0, 165);
+  body.addColorStop(0, '#ffffff'); body.addColorStop(0.12, col); body.addColorStop(0.42, col); body.addColorStop(0.58, dk); body.addColorStop(0.8, col); body.addColorStop(1, dk);
+  bg.fillStyle = body; bg.fillText(txt, 0, 0);
+  bg.globalCompositeOperation = 'source-atop'; bg.setTransform(1, 0, 0, 1, 0, 0);
+  const gl = bg.createLinearGradient(0, 0, W * 0.9, H * 0.9); gl.addColorStop(0, 'rgba(255,255,255,.65)'); gl.addColorStop(0.33, 'rgba(255,255,255,.18)'); gl.addColorStop(0.34, 'rgba(255,255,255,0)'); gl.addColorStop(0.7, 'rgba(0,0,0,.05)'); gl.addColorStop(1, 'rgba(0,0,0,.4)');
+  bg.fillStyle = gl; bg.fillRect(0, 0, W, H);
+  bg.strokeStyle = 'rgba(255,255,255,.35)'; bg.lineWidth = 7; [[60, 360, 300, 40], [120, 380, 360, 60], [20, 260, 200, 20]].forEach(([a, b2, c2, d]) => { bg.beginPath(); bg.moveTo(a, b2); bg.lineTo(c2, d); bg.stroke(); });
+  bg.fillStyle = 'rgba(255,255,255,.12)'; bg.beginPath(); bg.moveTo(0, H * 0.55); bg.lineTo(W, H * 0.25); bg.lineTo(W, H * 0.32); bg.lineTo(0, H * 0.62); bg.fill();
+  g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(b, 0, 0);
+  setup(g); g.lineWidth = 2.5; g.strokeStyle = 'rgba(255,240,200,.8)'; g.strokeText(txt, 0, 0);
+  symCache[n] = cv; return cv;
+}
+document.fonts && document.fonts.ready.then(() => { for (const k in symCache) delete symCache[k]; });
+function star(c, x, y, r, a) {
+  c.save(); c.globalAlpha = a; c.globalCompositeOperation = 'lighter'; c.fillStyle = '#fff';
+  c.beginPath(); c.moveTo(x, y - r); c.lineTo(x + r * 0.18, y - r * 0.18); c.lineTo(x + r, y); c.lineTo(x + r * 0.18, y + r * 0.18); c.lineTo(x, y + r); c.lineTo(x - r * 0.18, y + r * 0.18); c.lineTo(x - r, y); c.lineTo(x - r * 0.18, y - r * 0.18); c.closePath(); c.fill();
+  const g = c.createRadialGradient(x, y, 0, x, y, r * 0.8); g.addColorStop(0, 'rgba(255,255,255,.9)'); g.addColorStop(1, 'rgba(255,255,255,0)'); c.fillStyle = g; c.beginPath(); c.arc(x, y, r * 0.8, 0, 7); c.fill();
+  c.restore();
+}
+
+/* ---- 背景：光線・光彩・粒子 ---- */
+function makeRays(kind) {
+  const S = 1500, cv = document.createElement('canvas'); cv.width = cv.height = S; const g = cv.getContext('2d'); g.translate(S / 2, S / 2);
+  const n = kind === 'rainbow' ? 40 : 30;
+  for (let i = 0; i < n; i++) {
+    const a = i / n * Math.PI * 2, w = Math.PI / n * (0.55 + 0.45 * Math.abs(Math.sin(i * 7.3)));
+    let col;
+    if (kind === 'rainbow') col = `hsl(${(i / n) * 360},100%,${i % 2 ? 62 : 50}%)`;
+    else if (kind === 'red') col = i % 2 ? '#ff3a24' : '#ffb040';
+    else if (kind === 'purple') col = i % 2 ? '#a050ff' : '#ff50c8';
+    else if (kind === 'gold') col = i % 2 ? '#ffc830' : '#fff0b0';
+    else col = '#ffffff';
+    g.fillStyle = col; g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, S / 2, a - w / 2, a + w / 2); g.closePath(); g.fill();
+  }
+  g.globalCompositeOperation = 'destination-in';
+  const m = g.createRadialGradient(0, 0, 0, 0, 0, S / 2); m.addColorStop(0, 'rgba(0,0,0,1)'); m.addColorStop(0.35, 'rgba(0,0,0,.75)'); m.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = m; g.fillRect(-S / 2, -S / 2, S, S);
+  return cv;
+}
+const RAYS = { red: makeRays('red'), rainbow: makeRays('rainbow'), purple: makeRays('purple'), gold: makeRays('gold') };
+function rays(c, kind, cx, cy, rot, alpha, add = true) {
+  const r = RAYS[kind]; c.save(); c.globalAlpha = alpha; if (add) c.globalCompositeOperation = 'lighter';
+  c.translate(cx, cy); c.rotate(rot); c.drawImage(r, -r.width / 2, -r.height / 2); c.restore();
+}
+function flare(c, x, y, r, col, a = 1) {
+  c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = a;
+  const g = c.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.12, col); g.addColorStop(1, 'rgba(0,0,0,0)');
+  c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2); c.restore();
+}
+const DUST = Array.from({ length: 70 }, () => ({ x: Math.random() * LW, y: Math.random() * LH, s: rand(1, 3.5), v: rand(8, 40), p: rand(7) }));
+function dust(c, t, col, dt = 0.016) {
+  c.save(); c.globalCompositeOperation = 'lighter';
+  DUST.forEach(d => {
+    const y = (d.y - t * d.v) % LH, yy = y < 0 ? y + LH : y, x = d.x + Math.sin(t + d.p) * 12, a = 0.35 + 0.35 * Math.sin(t * 3 + d.p);
+    const g = c.createRadialGradient(x, yy, 0, x, yy, d.s * 4); g.addColorStop(0, col.replace('A', a.toFixed(2))); g.addColorStop(1, col.replace('A', '0'));
+    c.fillStyle = g; c.fillRect(x - d.s * 4, yy - d.s * 4, d.s * 8, d.s * 8);
+  });
+  c.restore();
+}
+function speedLines(c, cx, cy, n, col) {
+  c.save(); c.globalCompositeOperation = 'lighter'; c.strokeStyle = col;
+  for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, r0 = rand(220, 420), r1 = r0 + rand(160, 520); c.lineWidth = rand(1, 4); c.globalAlpha = rand(0.15, 0.5); c.beginPath(); c.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); c.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); c.stroke(); }
+  c.restore();
+}
+function baseGrad(c, inner, outer) { const g = c.createRadialGradient(LW / 2, LH * 0.45, 30, LW / 2, LH / 2, 720); g.addColorStop(0, inner); g.addColorStop(1, outer); c.fillStyle = g; c.fillRect(0, 0, LW, LH); }
 function drawBG(c, t) {
-  const bg = L.bg;
-  if (bg === 'normal' || bg === 'reach') {
-    const g = c.createLinearGradient(0, 0, 0, LH); g.addColorStop(0, bg === 'reach' ? '#05051c' : '#0a1a4a'); g.addColorStop(1, bg === 'reach' ? '#2a0a3a' : '#3b0f5c');
-    c.fillStyle = g; c.fillRect(0, 0, LW, LH);
-    for (let i = 0; i < 60; i++) { const x = (i * 173.3 + t * 8) % LW, y = (i * 97.7) % 420; c.fillStyle = `rgba(255,255,255,${0.3 + 0.3 * Math.sin(t * 3 + i)})`; c.fillRect(x, y, 3, 3); }
-    c.fillStyle = '#12052a'; c.beginPath(); c.moveTo(0, LH); for (let x = 0; x <= LW; x += 32) c.lineTo(x, 600 + Math.sin(x * 0.01 + 1) * 40 + Math.sin(x * 0.033) * 18); c.lineTo(LW, LH); c.fill();
-    for (let i = 0; i < 9; i++) { const x = (i * 131 + Math.sin(t * 0.7 + i) * 60 + t * 20) % (LW + 100) - 50, y = 480 + Math.sin(t * 1.3 + i * 2) * 60; const gr = c.createRadialGradient(x, y, 0, x, y, 30); gr.addColorStop(0, 'rgba(140,230,255,.8)'); gr.addColorStop(1, 'rgba(140,230,255,0)'); c.fillStyle = gr; c.beginPath(); c.arc(x, y, 30, 0, 7); c.fill(); }
-    if (bg === 'reach') { c.save(); c.globalAlpha = 0.35; drawRays(c, LW / 2, LH / 2, 36, t * 0.6, i => i % 2 ? 'rgba(255,255,255,.25)' : 'rgba(0,0,0,0)'); c.restore(); }
+  const bg = L.bg, cx = LW / 2, cy = LH * 0.45;
+  if (bg === 'normal') {
+    baseGrad(c, '#6a0612', '#120006');
+    rays(c, 'red', cx, cy, t * 0.05, 0.16);
+    flare(c, cx, cy - 40, 420, 'rgba(255,90,40,.25)', 0.5);
+    dust(c, t, 'rgba(255,200,90,A)');
+  } else if (bg === 'reach') {
+    baseGrad(c, '#4a0008', '#050002');
+    rays(c, 'red', cx, cy, t * 0.35, 0.5);
+    speedLines(c, cx, cy, 26, '#ffd8b0');
+    flare(c, cx, cy, 380, 'rgba(255,60,30,.4)', 0.8);
+    dust(c, t * 2, 'rgba(255,220,140,A)');
   } else if (bg === 'sp') {
     const hot = L.spHot;
-    c.fillStyle = hot >= 4 ? '#2a1600' : hot >= 3 ? '#2a0008' : '#12002a'; c.fillRect(0, 0, LW, LH);
-    drawRays(c, LW / 2, LH / 2, 24, t * 1.4, i => i % 2 ? (hot >= 4 ? 'rgba(255,200,40,.45)' : hot >= 3 ? 'rgba(255,30,60,.45)' : 'rgba(150,80,255,.45)') : 'rgba(0,0,0,.2)');
-    const gr = c.createRadialGradient(LW / 2, LH / 2, 20, LW / 2, LH / 2, 520); gr.addColorStop(0, 'rgba(255,255,255,.55)'); gr.addColorStop(0.3, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(0,0,0,.7)'); c.fillStyle = gr; c.fillRect(0, 0, LW, LH);
+    baseGrad(c, hot >= 4 ? '#5a3000' : hot >= 3 ? '#5a0008' : '#2a0050', '#000000');
+    rays(c, hot >= 4 ? 'gold' : hot >= 3 ? 'red' : 'purple', cx, cy, t * 0.9, 0.8);
+    speedLines(c, cx, cy, 40, hot >= 4 ? '#fff0a0' : hot >= 3 ? '#ffb0a0' : '#e0c0ff');
+    flare(c, cx, cy, 460, hot >= 4 ? 'rgba(255,200,40,.6)' : hot >= 3 ? 'rgba(255,40,40,.6)' : 'rgba(160,80,255,.6)', 0.9);
   } else if (bg === 'rush') {
-    c.fillStyle = '#3a0006'; c.fillRect(0, 0, LW, LH);
-    drawRays(c, LW / 2, LH * 0.55, 20, t * 0.9, i => i % 2 ? 'rgba(255,170,0,.55)' : 'rgba(255,20,40,.5)');
-    c.save(); c.globalAlpha = 0.16; c.font = `260px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#fff'; c.fillText('RUSH', LW / 2, LH / 2 + 20); c.restore();
+    baseGrad(c, '#7a0a06', '#140002');
+    rays(c, 'red', cx, cy + 40, t * 0.5, 0.7);
+    flare(c, cx, cy + 40, 400, 'rgba(255,140,30,.5)', 0.7);
+    c.save(); c.globalAlpha = 0.18; fancyText(c, 'RUSH', cx, cy + 60, 260, 'gold', t); c.restore();
+    dust(c, t * 1.5, 'rgba(255,210,100,A)');
   } else if (bg === 'jackpot') {
-    c.fillStyle = '#000'; c.fillRect(0, 0, LW, LH);
-    drawRays(c, LW / 2, LH / 2, 28, t * 1.2, i => `hsla(${(i * 360 / 28 + t * 120) % 360},100%,55%,.85)`);
-    const gr = c.createRadialGradient(LW / 2, LH / 2, 10, LW / 2, LH / 2, 480); gr.addColorStop(0, 'rgba(255,255,255,.5)'); gr.addColorStop(0.3, 'rgba(255,255,255,0)'); c.fillStyle = gr; c.fillRect(0, 0, LW, LH);
+    baseGrad(c, '#400010', '#000000');
+    rays(c, 'rainbow', cx, cy, t * 0.6, 1);
+    rays(c, 'gold', cx, cy, -t * 0.3, 0.25);
+    flare(c, cx, cy, 520, 'rgba(255,240,200,.7)', 0.9);
+    dust(c, t * 2, 'rgba(255,255,220,A)');
   }
 }
+
+/* ---- ガラスと液晶の質感（固定レイヤー） ---- */
+const GLASS = (() => {
+  const cv = document.createElement('canvas'); cv.width = LW; cv.height = LH; const g = cv.getContext('2d');
+  const v = g.createRadialGradient(LW / 2, LH / 2, LH * 0.35, LW / 2, LH / 2, LW * 0.75); v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.55)');
+  g.fillStyle = v; g.fillRect(0, 0, LW, LH);
+  const edge = (x0, y0, x1, y1, rx, ry, rw, rh) => { const e = g.createLinearGradient(x0, y0, x1, y1); e.addColorStop(0, 'rgba(0,0,0,.7)'); e.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = e; g.fillRect(rx, ry, rw, rh); };
+  edge(0, 0, 0, 34, 0, 0, LW, 34); edge(0, LH, 0, LH - 26, 0, LH - 26, LW, 26); edge(0, 0, 28, 0, 0, 0, 28, LH); edge(LW, 0, LW - 28, 0, LW - 28, 0, 28, LH);
+  for (let y = 0; y < LH; y += 3) { g.fillStyle = 'rgba(0,0,0,.05)'; g.fillRect(0, y, LW, 1); }
+  const r = g.createLinearGradient(0, 0, LW * 0.6, LH * 0.7); r.addColorStop(0, 'rgba(255,255,255,.13)'); r.addColorStop(0.45, 'rgba(255,255,255,.03)'); r.addColorStop(0.46, 'rgba(255,255,255,0)');
+  g.fillStyle = r; g.beginPath(); g.moveTo(0, 0); g.lineTo(LW * 0.62, 0); g.lineTo(LW * 0.18, LH); g.lineTo(0, LH); g.fill();
+  g.fillStyle = 'rgba(255,255,255,.06)'; g.beginPath(); g.moveTo(LW * 0.7, 0); g.lineTo(LW * 0.78, 0); g.lineTo(LW * 0.42, LH); g.lineTo(LW * 0.36, LH); g.fill();
+  const top = g.createLinearGradient(0, 0, 0, 10); top.addColorStop(0, 'rgba(255,255,255,.25)'); top.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = top; g.fillRect(30, 2, LW - 60, 10);
+  return cv;
+})();
+
+/* ---- 図柄・リール ---- */
 function drawSymbol(c, n, x, y, s = 1, blur = false, glow = 0) {
-  const [col, dk] = SYM[n]; c.save(); c.translate(x, y); c.scale(s, s * (blur ? 1.35 : 1)); c.transform(1, 0, -0.14, 1, 0, 0);
-  c.globalAlpha = blur ? 0.8 : 1; c.font = `250px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
-  if (glow > 0) { c.shadowColor = glow > 1 ? `hsl(${(now * 360) % 360},100%,60%)` : col; c.shadowBlur = 70 * Math.min(glow, 1.5); }
-  c.lineWidth = 34; c.strokeStyle = '#2a0006'; c.strokeText(n, 0, 14); c.shadowBlur = 0;
-  const gold = c.createLinearGradient(0, -120, 0, 130); gold.addColorStop(0, '#fff8c8'); gold.addColorStop(0.3, '#ffd23a'); gold.addColorStop(0.55, '#b06a00'); gold.addColorStop(0.75, '#ffe27a'); gold.addColorStop(1, '#8a4a00');
-  c.lineWidth = 20; c.strokeStyle = gold; c.strokeText(n, 0, 14);
-  const body = c.createLinearGradient(0, -110, 0, 120); body.addColorStop(0, '#ffffff'); body.addColorStop(0.18, col); body.addColorStop(0.55, dk); body.addColorStop(0.62, col); body.addColorStop(1, dk);
-  c.fillStyle = body; c.fillText(n, 0, 14);
-  c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,.7)'; c.strokeText(n, 0, 14);
-  if (!blur) { const tw = (Math.sin(now * 4 + n * 1.7) + 1) / 2; c.globalAlpha = tw; c.fillStyle = '#fff'; c.beginPath(); const sx = 55, sy = -85; c.moveTo(sx, sy - 22); c.lineTo(sx + 5, sy - 5); c.lineTo(sx + 22, sy); c.lineTo(sx + 5, sy + 5); c.lineTo(sx, sy + 22); c.lineTo(sx - 5, sy + 5); c.lineTo(sx - 22, sy); c.lineTo(sx - 5, sy - 5); c.closePath(); c.fill(); }
+  const sp = symSprite(n); c.save(); c.translate(x, y); c.scale(s, s);
+  if (glow > 0) {
+    c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = Math.min(1, glow * 0.7);
+    const col = glow > 1 ? `hsl(${(now * 300) % 360},100%,60%)` : SYM[n][0];
+    const g = c.createRadialGradient(0, 0, 10, 0, 0, 220); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = g; c.fillRect(-220, -220, 440, 440); c.restore();
+  }
+  if (blur) { c.globalAlpha = 0.3; for (const o of [-50, 0, 50]) c.drawImage(sp, -sp.width / 2, -sp.height * 0.7 + o, sp.width, sp.height * 1.4); }
+  else {
+    c.drawImage(sp, -sp.width / 2, -sp.height / 2);
+    const tw = (Math.sin(now * 3.2 + n * 1.7) + 1) / 2; if (tw > 0.55) star(c, 70, -120, 34, (tw - 0.55) * 2.2);
+  }
   c.restore();
 }
 function drawReels(c, t, mini = false) {
-  const xs = mini ? [380, 512, 644] : [200, 512, 824], cy = mini ? 110 : 360, cell = mini ? 0 : 255, sc = mini ? 0.42 : 1;
+  const xs = mini ? [400, 512, 624] : [210, 512, 814], cy = mini ? 96 : 360, cell = mini ? 0 : 300, sc = mini ? 0.3 : 0.92;
   const reach = reels[0].state === 'stop' && reels[2].state === 'stop' && reels[1].state !== 'stop' && symAt(reels[0].pos) === symAt(reels[2].pos);
   reels.forEach((r, i) => {
-    c.save(); c.beginPath(); c.rect(xs[i] - 160 * sc, mini ? cy - 50 : 105, 320 * sc, mini ? 100 : 520); c.clip();
+    c.save(); c.beginPath(); c.rect(xs[i] - 170, mini ? cy - 70 : 70, 340, mini ? 140 : 590); c.clip();
     const blur = r.state === 'spin' && r.speed > 8;
-    if (mini) { drawSymbol(c, symAt(r.pos), xs[i], cy, sc, false, L.hit ? 2 : 0); }
+    if (mini) drawSymbol(c, symAt(r.pos), xs[i], cy, sc, false, L.hit ? 1.5 : 0);
     else {
       const base = Math.floor(r.pos);
       for (let k = base - 1; k <= base + 2; k++) {
-        const y = cy + (r.pos - k) * cell; if (y < -150 || y > LH + 150) continue;
+        const y = cy + (r.pos - k) * cell; if (y < -200 || y > LH + 200) continue;
         const centerish = Math.abs(r.pos - k) < 0.5;
-        let glow = 0; if (centerish && r.state === 'stop') { if (L.hit) glow = 2; else if (reach && i !== 1) glow = 0.7 + 0.5 * Math.sin(t * 12); }
-        drawSymbol(c, symAt(k), xs[i], y, centerish && r.state === 'stop' ? 1 + (L.hit ? Math.sin(t * 10) * 0.05 : 0) : 0.9, blur, glow);
+        let glow = 0; if (centerish && r.state === 'stop') { if (L.hit) glow = 2; else if (reach && i !== 1) glow = 0.8 + 0.4 * Math.sin(t * 12); }
+        const s = centerish && r.state === 'stop' ? sc * (1 + (L.hit ? Math.sin(t * 10) * 0.04 : 0)) : sc * 0.86;
+        if (!centerish && r.state === 'stop') { c.save(); c.globalAlpha = 0.45; drawSymbol(c, symAt(k), xs[i], y, s, false, 0); c.restore(); }
+        else drawSymbol(c, symAt(k), xs[i], y, s, blur, glow);
       }
     }
     c.restore();
   });
-  if (reach && !mini && !L.round) {
-    c.save(); c.globalAlpha = 0.6 + 0.4 * Math.sin(t * 10); c.font = `64px ${FONT}`; c.textAlign = 'center'; c.fillStyle = '#ff3b5b'; c.lineWidth = 10; c.strokeStyle = '#fff';
-    c.strokeText('REACH', LW / 2, 150); c.fillText('REACH', LW / 2, 150); c.restore();
+  if (reach && !mini && !L.round) { c.save(); c.globalAlpha = 0.65 + 0.35 * Math.sin(t * 10); fancyText(c, 'REACH', LW / 2, 92, 66, 'red', t); c.restore(); }
+}
+function gem(c, x, y, r, col, dark, on = true, t = now) {
+  const oct = rad => { c.beginPath(); for (let i = 0; i < 8; i++) { const a = (i + 0.5) / 8 * Math.PI * 2; c[i ? 'lineTo' : 'moveTo'](x + Math.cos(a) * rad, y + Math.sin(a) * rad); } c.closePath(); };
+  c.save();
+  oct(r * 1.22); const fr = c.createLinearGradient(x, y - r, x, y + r); fr.addColorStop(0, '#ffffff'); fr.addColorStop(0.45, '#9aa1ac'); fr.addColorStop(0.55, '#5a606a'); fr.addColorStop(1, '#eceef2'); c.fillStyle = fr; c.fill();
+  c.lineWidth = 2; c.strokeStyle = 'rgba(0,0,0,.6)'; c.stroke();
+  oct(r);
+  if (on) {
+    c.shadowColor = col; c.shadowBlur = 26;
+    const g = c.createRadialGradient(x - r * 0.25, y - r * 0.3, 1, x, y, r * 1.1); g.addColorStop(0, '#ffffff'); g.addColorStop(0.25, col); g.addColorStop(1, dark); c.fillStyle = g; c.fill(); c.shadowBlur = 0;
+    c.save(); c.clip(); c.strokeStyle = 'rgba(255,255,255,.35)'; c.lineWidth = 2;
+    for (let i = 0; i < 4; i++) { const a = i / 4 * Math.PI; c.beginPath(); c.moveTo(x + Math.cos(a) * r, y + Math.sin(a) * r); c.lineTo(x - Math.cos(a) * r, y - Math.sin(a) * r); c.stroke(); }
+    c.fillStyle = 'rgba(255,255,255,.35)'; c.beginPath(); c.ellipse(x - r * 0.25, y - r * 0.35, r * 0.45, r * 0.22, -0.5, 0, 7); c.fill(); c.restore();
+  } else { const g = c.createRadialGradient(x, y - r * 0.3, 1, x, y, r); g.addColorStop(0, '#3a3c44'); g.addColorStop(1, '#0a0a10'); c.fillStyle = g; c.fill(); }
+  c.restore();
+}
+const LEVEL_DARK = ['#5a0008', '#06205a', '#044a14', '#4a0006', '#5a3000'];
+function drawHoldIcon(c, x, y, r, lvl, t, cur = false) {
+  const col = lvl === 0 ? '#ff2a3a' : LEVEL_COL[lvl], rr = r * (lvl >= 3 ? 1 + Math.sin(t * 12) * 0.07 : 1);
+  if (lvl >= 3) flare(c, x, y, r * 3.2, lvl === 4 ? 'rgba(255,200,40,.6)' : 'rgba(255,30,40,.6)', 0.6 + 0.4 * Math.sin(t * 12));
+  gem(c, x, y, rr, col, LEVEL_DARK[lvl]);
+  if (cur) { c.save(); c.strokeStyle = metalGrad(c, y - r, y + r, MET.gold.stops); c.lineWidth = 5; c.beginPath(); c.arc(x, y, r * 1.55, 0, 7); c.stroke(); c.restore(); }
+  if (lvl === 4) for (let i = 0; i < 3; i++) { const a = t * 3 + i * 2.1; star(c, x + Math.cos(a) * r * 1.4, y + Math.sin(a) * r * 1.4, 14, 0.8); }
+}
+function drawHolds(c, t) {
+  const y = LH - 62;
+  if (state.current) drawHoldIcon(c, 78, y, 28, state.current.level, t, true);
+  for (let i = 0; i < SPEC.holdMax; i++) {
+    const h = state.holds[i], x = 178 + i * 92;
+    if (h) drawHoldIcon(c, x, y, 30, h.level, t); else gem(c, x, y, 30, '#000', '#000', false);
+  }
+  if (!L.hit) {
+    c.save(); c.font = `34px ${FONT}`; c.textAlign = 'right'; c.textBaseline = 'middle';
+    c.fillStyle = 'rgba(0,0,0,.6)'; c.fillText(`${stats.since}`, LW - 92, y + 3); c.fillStyle = '#e8ecf4'; c.fillText(`${stats.since}`, LW - 94, y);
+    c.font = `22px ${FONT}`; c.fillStyle = '#b8c0d0'; c.fillText('回転', LW - 36, y + 4); c.restore();
+  }
+  if (state.mode === 'rush' && !L.round) {
+    fancyText(c, '妖怪RUSH', 150, 52, 48, 'red', t);
+    fancyText(c, `${state.chain}連`, 330, 52, 46, 'gold', t);
+    c.save(); c.font = `28px ${FONT}`; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillStyle = '#ffe9b0'; c.fillText(`残り ${state.stLeft} 回 ・ 継続率 約${Math.round(CONT_RATE * 100)}%`, 400, 54); c.restore();
   }
 }
 function drawRound(c, t) {
-  const r = L.round; c.save(); c.textAlign = 'center'; c.textBaseline = 'middle';
-  c.fillStyle = 'rgba(10,0,4,.62)'; c.fillRect(110, 168, 804, 480);
-  c.font = `140px ${FONT}`; c.lineWidth = 18; c.strokeStyle = '#1b0230';
-  const grd = c.createLinearGradient(200, 0, 824, 0); for (let i = 0; i <= 6; i++) grd.addColorStop(i / 6, `hsl(${(i * 60 + t * 200) % 360},100%,60%)`);
-  c.strokeText(`ROUND ${r.n}`, LW / 2, 300); c.fillStyle = grd; c.fillText(`ROUND ${r.n}`, LW / 2, 300);
-  c.font = `64px ${FONT}`; c.fillStyle = '#fff'; c.lineWidth = 10; c.strokeText(`${att.count} / ${SPEC.roundCount} C`, LW / 2, 430); c.fillText(`${att.count} / ${SPEC.roundCount} C`, LW / 2, 430);
-  c.font = `54px ${FONT}`; c.fillStyle = '#ffe14a'; const s = `獲得 ${stats.gain} 発`; c.strokeText(s, LW / 2, 520); c.fillText(s, LW / 2, 520);
-  if (Math.sin(t * 12) > 0) { c.font = `58px ${FONT}`; c.fillStyle = '#ff3b3b'; c.strokeStyle = '#fff'; c.lineWidth = 8; c.strokeText('右打ち ▶▶▶', LW / 2, 610); c.fillText('右打ち ▶▶▶', LW / 2, 610); }
-  for (let i = 0; i < SPEC.rounds; i++) { c.fillStyle = i < r.n ? `hsl(${i * 36},100%,60%)` : 'rgba(255,255,255,.2)'; c.fillRect(LW / 2 - 300 + i * 61, 190, 52, 16); }
-  c.restore();
+  const r = L.round;
+  c.save(); const pg = c.createLinearGradient(0, 150, 0, 690); pg.addColorStop(0, 'rgba(20,0,6,.25)'); pg.addColorStop(0.5, 'rgba(20,0,6,.7)'); pg.addColorStop(1, 'rgba(20,0,6,.25)');
+  c.fillStyle = pg; c.fillRect(0, 150, LW, 540); c.restore();
+  fancyText(c, 'ROUND', LW / 2 - 120, 290, 96, 'gold', t);
+  fancyText(c, String(r.n), LW / 2 + 190, 300, 210, 'red', t);
+  for (let i = 0; i < SPEC.roundCount; i++) gem(c, LW / 2 - 333 + i * 74, 450, 24, '#ffd23a', '#5a3000', i < att.count);
+  fancyText(c, `獲得 ${stats.gain}`, LW / 2 - 40, 570, 78, 'gold', t);
+  c.save(); c.font = `40px ${FONT}`; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillStyle = '#ffe9b0'; c.fillText('発', LW / 2 + 200, 582); c.restore();
+  for (let i = 0; i < SPEC.rounds; i++) {
+    const x = LW / 2 - 315 + i * 70; c.save();
+    c.fillStyle = i < r.n ? metalGrad(c, 176, 194, MET.red.stops) : 'rgba(255,255,255,.12)'; c.fillRect(x, 178, 58, 14);
+    c.strokeStyle = 'rgba(255,220,150,.5)'; c.strokeRect(x, 178, 58, 14); c.restore();
+  }
 }
 function drawCaptions(c, t) {
-  L.captions = L.captions.filter(k => t - k.t0 < k.dur);
+  const tr = rt(); L.captions = L.captions.filter(k => tr - k.t0 < k.dur);
   L.captions.forEach(k => {
-    const a = t - k.t0, sIn = Math.min(1, a / 0.15), out = clamp((k.dur - a) / 0.25, 0, 1);
-    c.save(); c.translate(LW / 2, k.y); c.scale(lerp(1.8, 1, sIn), lerp(1.8, 1, sIn)); c.globalAlpha = Math.min(sIn, out);
-    c.font = `${k.size}px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = k.size * 0.16; c.strokeStyle = k.stroke; c.lineJoin = 'round';
-    let fill = k.color;
-    if (k.color === 'rainbow') { fill = c.createLinearGradient(-400, 0, 400, 0); for (let i = 0; i <= 6; i++) fill.addColorStop(i / 6, `hsl(${(i * 60 + t * 300) % 360},100%,60%)`); }
-    c.shadowColor = typeof k.color === 'string' && k.color !== 'rainbow' ? k.color : '#fff'; c.shadowBlur = 30;
-    c.strokeText(k.text, 0, 0); c.fillStyle = fill; c.fillText(k.text, 0, 0);
-    if (k.sub) { c.font = `${k.size * 0.42}px ${FONT}`; c.lineWidth = 8; c.strokeText(k.sub, 0, k.size * 0.78); c.fillStyle = '#fff'; c.fillText(k.sub, 0, k.size * 0.78); }
+    const a = tr - k.t0, sIn = Math.min(1, a / 0.15), out = clamp((k.dur - a) / 0.25, 0, 1);
+    c.save(); c.translate(LW / 2, k.y); const sc = lerp(1.8, 1, sIn); c.scale(sc, sc); c.globalAlpha = Math.min(sIn, out);
+    if (a < 0.3) flare(c, 0, 0, 420, 'rgba(255,255,255,.5)', (0.3 - a) * 2.5);
+    fancyText(c, k.text, 0, 0, k.size, k.style, t);
+    if (k.sub) fancyText(c, k.sub, 0, k.size * 0.82, k.size * 0.4, 'silver', t);
     c.restore();
   });
-}
-function drawHoldIcon(c, x, y, r, lvl, t, cur = false) {
-  const col = LEVEL_COL[lvl]; c.save(); const rr = r * (lvl >= 3 ? 1 + Math.sin(t * 12) * 0.08 : 1);
-  const oct = (rad) => { c.beginPath(); for (let i = 0; i < 8; i++) { const a = (i + 0.5) / 8 * Math.PI * 2; c[i ? 'lineTo' : 'moveTo'](x + Math.cos(a) * rad, y + Math.sin(a) * rad); } c.closePath(); };
-  oct(rr * 1.18); const fr = c.createLinearGradient(x, y - rr, x, y + rr); fr.addColorStop(0, '#ffffff'); fr.addColorStop(0.5, '#8a8f98'); fr.addColorStop(1, '#e8eaee'); c.fillStyle = fr; c.fill();
-  if (lvl >= 3 || cur) { c.shadowColor = lvl ? col : '#ff3040'; c.shadowBlur = 30 + Math.sin(t * 14) * 14; }
-  oct(rr); const g = c.createRadialGradient(x - rr * 0.3, y - rr * 0.35, 2, x, y, rr * 1.1);
-  const base = lvl === 0 ? '#ff2a3a' : col; g.addColorStop(0, '#ffffff'); g.addColorStop(0.3, base); g.addColorStop(1, lvl === 4 ? '#6a3a00' : lvl === 0 || lvl === 3 ? '#4a0008' : '#10204a');
-  c.fillStyle = g; c.fill(); c.shadowBlur = 0;
-  c.strokeStyle = cur ? '#ffe14a' : 'rgba(255,255,255,.6)'; c.lineWidth = cur ? 4 : 2; c.stroke();
-  if (lvl === 4) { for (let i = 0; i < 4; i++) { const a = t * 3 + i * Math.PI / 2; c.fillStyle = '#fff'; c.beginPath(); c.arc(x + Math.cos(a) * r * 1.5, y + Math.sin(a) * r * 1.5, 4, 0, 7); c.fill(); } }
-  c.restore();
-}
-function drawHolds(c, t) {
-  c.save(); c.fillStyle = 'rgba(0,0,0,.45)'; c.fillRect(0, LH - 90, LW, 90);
-  if (state.current) drawHoldIcon(c, 90, LH - 45, 30, state.current.level, t, true);
-  for (let i = 0; i < SPEC.holdMax; i++) {
-    const h = state.holds[i], x = 210 + i * 78;
-    if (h) drawHoldIcon(c, x, LH - 45, 22, h.level, t); else { c.strokeStyle = 'rgba(255,255,255,.25)'; c.lineWidth = 2; c.beginPath(); c.arc(x, LH - 45, 20, 0, 7); c.stroke(); }
-  }
-  c.font = `30px ${FONT}`; c.textAlign = 'right'; c.textBaseline = 'middle'; c.fillStyle = '#fff';
-  if (state.mode === 'rush') { c.fillStyle = '#ffe14a'; c.fillText(`妖怪RUSH  残り ${state.stLeft} 回`, LW - 30, LH - 45); }
-  else c.fillText(`${stats.since} 回転`, LW - 30, LH - 45);
-  c.restore();
-  if (state.mode === 'rush' && !L.round) {
-    c.save(); c.font = `40px ${FONT}`; c.textAlign = 'left'; c.fillStyle = '#ffe14a'; c.strokeStyle = '#4a0010'; c.lineWidth = 8;
-    const s = `${state.chain}連  継続率 約${Math.round(CONT_RATE * 100)}%`; c.strokeText(s, 24, 52); c.fillText(s, 24, 52); c.restore();
-  }
 }
 function drawLCD(t) {
   const c = lctx; c.save();
@@ -876,21 +1027,24 @@ function drawLCD(t) {
   drawCaptions(c, t);
   drawHolds(c, t);
   if (state.started && needRight()) { // 右打ちタグ
-    c.save(); c.translate(LW - 190, 52); c.transform(1, 0, -0.2, 1, 0, 0);
-    const g = c.createLinearGradient(0, -30, 0, 30); g.addColorStop(0, '#3a0006'); g.addColorStop(1, '#120002'); c.fillStyle = g; c.fillRect(-10, -32, 190, 64);
-    c.strokeStyle = '#ffd23a'; c.lineWidth = 3; c.strokeRect(-10, -32, 190, 64);
-    c.font = `40px ${FONT}`; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillStyle = Math.sin(t * 10) > -0.3 ? '#fff' : '#ff6a6a'; c.fillText('右打ち', 4, 3);
-    c.beginPath(); c.moveTo(140, -14); c.lineTo(166, 3); c.lineTo(140, 20); c.closePath(); c.fill(); c.restore();
+    c.save(); c.translate(LW - 190, 54); c.transform(1, 0, -0.2, 1, 0, 0);
+    const g = c.createLinearGradient(0, -32, 0, 32); g.addColorStop(0, '#5a0008'); g.addColorStop(1, '#160002'); c.fillStyle = g; c.fillRect(-14, -32, 196, 64);
+    c.strokeStyle = metalGrad(c, -32, 32, MET.gold.stops); c.lineWidth = 4; c.strokeRect(-14, -32, 196, 64); c.restore();
+    c.save(); c.globalAlpha = Math.sin(t * 10) > -0.4 ? 1 : 0.6; fancyText(c, '右打ち ▶', LW - 100, 56, 42, 'silver', t); c.restore();
   }
   if (L.hit && !L.round) { // 10R 1500
-    c.save(); c.translate(LW - 250, LH - 160); c.transform(1, 0, -0.2, 1, 0, 0);
-    const g = c.createLinearGradient(0, -40, 0, 40); g.addColorStop(0, '#5a0008'); g.addColorStop(1, '#1a0002'); c.fillStyle = g; c.fillRect(-120, -40, 330, 80);
-    const gd = c.createLinearGradient(0, -40, 0, 40); gd.addColorStop(0, '#fff3b0'); gd.addColorStop(0.5, '#d89a1a'); gd.addColorStop(1, '#ffe27a');
-    c.strokeStyle = gd; c.lineWidth = 5; c.strokeRect(-120, -40, 330, 80);
-    c.font = `54px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = 8; c.strokeStyle = '#2a0004'; c.strokeText('10R 1500', 45, 4); c.fillStyle = gd; c.fillText('10R 1500', 45, 4); c.restore();
+    c.save(); c.translate(LW - 230, LH - 150); c.transform(1, 0, -0.2, 1, 0, 0);
+    const g = c.createLinearGradient(0, -42, 0, 42); g.addColorStop(0, '#6a0008'); g.addColorStop(1, '#1a0002'); c.fillStyle = g; c.fillRect(-150, -42, 330, 84);
+    c.strokeStyle = metalGrad(c, -42, 42, MET.gold.stops); c.lineWidth = 6; c.strokeRect(-150, -42, 330, 84); c.restore();
+    fancyText(c, '10R 1500', LW - 222, LH - 146, 58, 'gold', t);
   }
-  if (L.push) { c.save(); c.globalAlpha = 0.5 + 0.5 * Math.sin(t * 16); c.strokeStyle = '#ff2a3a'; c.lineWidth = 24; c.strokeRect(12, 12, LW - 24, LH - 24); c.restore(); }
-  if (L.flash > 0) { c.fillStyle = `rgba(255,255,255,${L.flash})`; c.fillRect(0, 0, LW, LH); L.flash = Math.max(0, L.flash - 0.05); }
+  if (L.push) {
+    c.save(); c.globalCompositeOperation = 'lighter'; const a = 0.5 + 0.5 * Math.sin(t * 16);
+    const e = c.createRadialGradient(LW / 2, LH / 2, LH * 0.4, LW / 2, LH / 2, LW * 0.7); e.addColorStop(0, 'rgba(255,0,20,0)'); e.addColorStop(1, `rgba(255,20,40,${0.7 * a})`);
+    c.fillStyle = e; c.fillRect(0, 0, LW, LH); c.restore();
+  }
+  c.drawImage(GLASS, 0, 0);
+  const fa = L.flashT ? Math.max(0, 1 - (rt() - L.flashT) * 1.4) : 0; if (fa > 0) { c.fillStyle = `rgba(255,255,255,${fa})`; c.fillRect(0, 0, LW, LH); }
   if (L.black) { c.fillStyle = '#000'; c.fillRect(0, 0, LW, LH); }
   c.restore(); lcdTex.needsUpdate = true;
 }
@@ -1077,7 +1231,7 @@ async function puchun() {
   const bl = $('black'); bl.style.transition = 'none'; bl.style.opacity = 1; L.black = true;
   SU.target = 0; SU.k = 0; gim.target = 0; setLamp('off');
   await sleep(850);
-  L.black = false; bl.style.opacity = 0; whiteFlash(1300); L.flash = 1;
+  L.black = false; bl.style.opacity = 0; whiteFlash(1300); L.flashT = rt();
 }
 
 async function bigHit(e, sym, viaPush = false) {
@@ -1317,7 +1471,7 @@ idleLook();
 document.fonts && document.fonts.ready.then(() => {});
 requestAnimationFrame(frame);
 mainLoop();
-window.__pachi = { state, stats, SPEC, setPower, startGame, balls, stepBall, makeBall, den, att, onEntry };
+window.__pachi = { state, stats, SPEC, setPower, startGame, balls, stepBall, makeBall, den, att, onEntry, lcdCanvas, L };
 </script>
 </body>
 </html>
