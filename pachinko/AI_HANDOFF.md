@@ -33,7 +33,7 @@ ES Modules を使うため `file://` で直接開くと動きません。CDN（c
 4. 盤面物理：盤面平面上の2D物理。円形外レール、釘（グリッドハッシュ）、線分 `seg()`（`active` で開閉切替）、風車
    - センサー：ヘソ、電チュー、アタッカー、ワープ（確率 `WARP_P`）、アウト
    - `window.__sim(power, n, {den, att})` で入賞率をヘッドレス計測できます
-5. Three.js シーン：盤面アート（Canvas）、釘と玉（InstancedMesh）、液晶、役物（召喚メダル）、ヘソ・電チュー・アタッカー、パーティクル、召喚エフェクト `SU`、虹リング、群予告オブジェクト。ブルームは UnrealBloomPass
+5. Three.js シーン：実機風の筐体（白い本体、THUNDERロゴ、V字クリスタル、スピーカー、黒い下皿の持ち玉表示・PUSHボタン・ハンドル、右側のカードユニット「残高・貸出・返却」）は `CAB` にまとめ、クリック対象は `CAB.pickables`。ホール背景はボケ画像。盤面アート（Canvas）、釘と玉（InstancedMesh）、液晶、役物（召喚メダル）、ヘソ・電チュー・アタッカー、パーティクル、召喚エフェクト `SU`、虹リング、群予告オブジェクト。ブルームは UnrealBloomPass
 6. 液晶：1024×768 の Canvas を毎フレーム描画してテクスチャ化。リール `reels` / `stopReel()`、背景テーマ `L.bg`（normal / reach / sp / rush / jackpot）、テロップ `caption()`、保留アイコン
 7. ゲーム状態・抽選：`state`, `stats`, `lottery()`, `decideSymbols()`, 入賞処理 `onEntry()`, 先読み演出 `onHoldEffect()`
 8. 演出ヘルパー：カメラ揺れ `shakeCam`、CSS揺れ `cssShake`、`edgeFlash`、`whiteFlash`、大文字テロップ `showBig`、PUSHボタン待ち `waitPush`、枠ランプ
@@ -46,6 +46,7 @@ ES Modules を使うため `file://` で直接開くと動きません。CDN（c
 - ヘソ入賞率：命釘の位置（`buildNails` 末尾の手動配置）、`WARP_P`、左ルートの `seg(-8.2, -2.05, -3.4, -2.75)`。現状、左打ちのハンドル50〜55でおよそ9%
 - 右打ちは、ハンドル96で電チュー・アタッカーとも約100%入賞
 - 演出の出現率：`lottery()` 内の配列（保留色の重み、リーチ・SP・群・カットインの確率）
+- 筐体操作：PUSHボタン・貸出（500円で125玉、残高 `state.credit`）・返却・計数をクリックできます。ハンドルはドラッグで強さを変えられます
 - テスト用：HUDの「デモ 1/30」「次回 大当り」。コンソールでは `__pachi`（state, stats, SPEC, onEntry など）を操作できます
 
 ## 既知の制約・未確認の点
