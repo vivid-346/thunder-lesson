@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&display=swap" rel="stylesheet">
 <style>
-:root{
+:root{color-scheme:dark;
   --gold:#ffd54a; --red:#ff2a4d; --panel:rgba(14,6,30,.78); --line:rgba(255,213,74,.35);
 }
 html,body{margin:0;height:100%;background:#05020c;overflow:hidden;color:#fff;
@@ -23,20 +23,20 @@ html,body{margin:0;height:100%;background:#05020c;overflow:hidden;color:#fff;
 /* HUD */
 .panel{position:fixed;background:var(--panel);border:1px solid var(--line);border-radius:12px;
   box-shadow:0 0 18px rgba(160,60,255,.25);backdrop-filter:blur(4px);z-index:5}
-#hud{top:10px;left:10px;padding:10px 14px;min-width:190px;font-size:13px}
+#hud{top:calc(10px + env(safe-area-inset-top,0px));left:calc(10px + env(safe-area-inset-left,0px));padding:10px 14px;min-width:190px;font-size:13px}
 #hud .title{font-size:15px;color:var(--gold);letter-spacing:.04em;margin-bottom:6px;text-shadow:0 0 8px #ff8a00}
 #hud .title small{display:block;font-size:10px;color:#d8c8ff;letter-spacing:0}
 #hud .row{display:flex;justify-content:space-between;gap:16px;line-height:1.55}
 #hud .row span{color:#cbb8ff}
 #hud .row b{font-weight:400;font-variant-numeric:tabular-nums}
 #hud .big b{font-size:20px;color:#fff;text-shadow:0 0 8px #49c6ff}
-#modeBox{top:10px;right:10px;padding:10px 14px;text-align:right;font-size:12px;max-width:260px}
+#modeBox{top:calc(10px + env(safe-area-inset-top,0px));right:calc(10px + env(safe-area-inset-right,0px));padding:10px 14px;text-align:right;font-size:12px;max-width:260px}
 #mode{font-size:20px;letter-spacing:.06em}
 #mode.rush{color:#ffcf3a;text-shadow:0 0 10px #ff3a00,0 0 22px #ff0040;animation:blink .6s steps(2) infinite}
 #mode.jackpot{background:linear-gradient(90deg,#ff3b3b,#ffb03b,#fff53b,#3bff6b,#3bd8ff,#9b5bff,#ff3bd2);-webkit-background-clip:text;background-clip:text;color:transparent}
 #specLine{color:#cbb8ff;margin-top:4px;line-height:1.5}
 @keyframes blink{50%{opacity:.55}}
-#controls{left:50%;bottom:10px;transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+#controls{left:50%;bottom:calc(10px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:8px;align-items:center;
   justify-content:center;padding:8px 12px;max-width:calc(100vw - 40px);font-size:12px}
 #controls button,#controls select{font-family:inherit;font-size:12px;color:#fff;background:linear-gradient(#4a1d80,#24104a);
   border:1px solid var(--line);border-radius:8px;padding:7px 10px;cursor:pointer}
@@ -479,7 +479,8 @@ window.__sim = (power, n = 300, opts = {}) => {
  *  5. Three.js シーン
  * ========================================================= */
 const renderer = new THREE.WebGLRenderer({ canvas: $('gl'), antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const IS_PHONE = Math.min(innerWidth, innerHeight) < 760;
+renderer.setPixelRatio(Math.min(devicePixelRatio, IS_PHONE ? 1.5 : 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.95;
 const scene = new THREE.Scene(); scene.background = new THREE.Color(0x05020c);
 const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 300);
