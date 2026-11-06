@@ -255,18 +255,48 @@ let now = 0; // 秒
  * ========================================================= */
 const Snd = (() => {
   let ctx = null, master = null, bus = null, bgmBus = null, noiseBuf = null;
+  let reverb = null, wet = null, beatEpoch = 0, beatTempo = 96;
   let enabled = true, lastNail = 0, bgmTimer = null, bgmMode = null, step = 0;
   function init() {
     if (ctx) { ctx.resume(); return; }
     ctx = new (window.AudioContext || window.webkitAudioContext)();
+    beatEpoch = ctx.currentTime;
     const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 6;
-    master = ctx.createGain(); master.gain.value = 0.7; master.connect(comp); comp.connect(ctx.destination);
-    bus = ctx.createGain(); bus.connect(master);
+    master = ctx.createGain(); master.gain.value = 0.55; master.connect(comp); comp.connect(ctx.destination);
+    bus = ctx.createGain(); bus.gain.value = 0.82; bus.connect(master);
+    reverb = ctx.createConvolver();
+    const ir = ctx.createBuffer(2, Math.floor(ctx.sampleRate * .48), ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const a = ir.getChannelData(ch);
+      for (let i = 0; i < a.length; i++) a[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / a.length, 3) * .3;
+    }
+    reverb.buffer = ir; wet = ctx.createGain(); wet.gain.value = .16;
+    reverb.connect(wet); wet.connect(master);
     bgmBus = ctx.createGain(); bgmBus.gain.value = 0.32; bgmBus.connect(master);
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   }
   const ok = () => ctx && enabled;
+  // 残響用ノードは各音の終了後に解放し、長時間遊んでも溜めない。
+  function spatial(pan = 0, tail = .1, life = 1) {
+    if (!ok()) return;
+    const p = ctx.createStereoPanner(), send = ctx.createGain();
+    p.pan.value = pan; send.gain.value = tail;
+    p.connect(bus); p.connect(send); send.connect(reverb);
+    setTimeout(() => { p.disconnect(); send.disconnect(); }, (life + .65) * 1000);
+    return p;
+  }
+  function duck(duration = .35) {
+    if (!ok()) return; const t = ctx.currentTime, g = bgmBus.gain;
+    g.cancelScheduledValues(t); g.setValueAtTime(Math.min(g.value, .32), t);
+    g.linearRampToValueAtTime(.12, t + .015); g.setValueAtTime(.12, t + duration);
+    g.linearRampToValueAtTime(.32, t + duration + .28);
+  }
+  function beatClock() {
+    const seconds = ctx ? ctx.currentTime : performance.now() / 1000;
+    const beat = (seconds - beatEpoch) * beatTempo / 60;
+    return { beat, phase: beat - Math.floor(beat), tempo: beatTempo };
+  }
   function tone(f, d = 0.15, type = 'square', v = 0.15, t0 = 0, slide = null, dest) {
     if (!ok()) return; const t = ctx.currentTime + t0;
     const o = ctx.createOscillator(), g = ctx.createGain();
@@ -283,13 +313,13 @@ const Snd = (() => {
     s.connect(f); f.connect(g); g.connect(dest || bus); s.start(t, Math.random()); s.stop(t + d + 0.05);
   }
   const kick = (t0 = 0, v = 0.5, dest) => tone(150, 0.18, 'sine', v, t0, 40, dest);
-  const chord = (fs, d, t0, v = 0.08, type = 'sawtooth') => fs.forEach(f => { tone(f, d, type, v, t0); tone(f * 1.005, d, 'square', v * 0.5, t0); });
+  const chord = (fs, d, t0, v = 0.06, type = 'triangle', dest) => fs.forEach(f => { tone(f, d, type, v, t0, null, dest); tone(f * 1.005, d, 'sine', v * 0.35, t0, null, dest); });
   const N = n => 440 * Math.pow(2, (n - 69) / 12); // MIDI→Hz
 
   const sfx = {
     shoot() { tone(1100, 0.025, 'square', 0.02); },
-    nail(imp) { if (!ok() || ctx.currentTime - lastNail < 0.03) return; lastNail = ctx.currentTime; tone(rand(2600, 4400), 0.04, 'triangle', Math.min(0.045, imp * 0.003)); },
-    heso() { tone(1318, 0.07, 'square', 0.07); tone(1760, 0.12, 'square', 0.07, 0.06); },
+    nail(imp, x = 0) { if (!ok() || ctx.currentTime - lastNail < 0.03) return; lastNail = ctx.currentTime; tone(rand(2600, 4400), 0.04, 'triangle', Math.min(0.035, imp * 0.003), 0, null, spatial(clamp(x / 9, -.45, .45), .05, .1)); },
+    heso() { const d = spatial(-.12, .12, .3); tone(988, .07, 'triangle', .07, 0, null, d); tone(1318, .12, 'triangle', .07, .06, null, d); },
     warp() { tone(700, 0.25, 'sine', 0.08, 0, 1800); },
     holdBlue() { tone(880, 0.1, 'square', 0.1); tone(1318, 0.18, 'square', 0.1, 0.08); },
     holdGreen() { [988, 1318, 1568].forEach((f, i) => tone(f, 0.15, 'square', 0.1, i * 0.07)); },
@@ -297,20 +327,21 @@ const Snd = (() => {
     holdGold() { tone(300, 0.55, 'sawtooth', 0.2, 0, 2600); [2093, 2637, 3136, 4186].forEach((f, i) => tone(f, 0.5, 'triangle', 0.09, 0.5 + i * 0.07)); kick(0, 0.9); kick(0.5, 0.9); },
     kyuin() { tone(260, 0.5, 'sawtooth', 0.22, 0, 2800); tone(2800, 0.7, 'square', 0.08, 0.5, 2700); noise(0.6, 0.15, 0, 800, 8000); },
     spinStart() { tone(660, 0.04, 'square', 0.05); },
-    reelStop() { tone(170, 0.07, 'square', 0.13); noise(0.05, 0.1, 0, 1200); },
-    reach() { [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, 0.16, 'square', 0.1, i * 0.06)); noise(0.5, 0.12, 0, 600, 5000); },
+    reelStop() { tone(240, .025, 'triangle', .09, 0, 90); noise(.018, .08, 0, 2300); noise(.015, .035, .028, 1200); },
+    reach() { const d = spatial(.08, .28, 1); [523, 659, 784, 1046].forEach((f, i) => tone(f, .22, 'triangle', .09, i * .08, null, d)); noise(.4, .07, 0, 600, 2800, 'bandpass', d); },
     sp() { tone(55, 4.5, 'sawtooth', 0.14, 0, 220); tone(82, 4.5, 'square', 0.06, 0, 330); noise(4.5, 0.12, 0, 200, 4000, 'lowpass'); for (let i = 0; i < 8; i++) kick(i * 0.55, 0.45); },
     cutin() { noise(0.4, 0.3, 0, 3000, 300); kick(0, 1); tone(1200, 0.3, 'sawtooth', 0.12, 0, 200); },
     group() { noise(2.6, 0.22, 0, 250, 6000); for (let i = 0; i < 18; i++) { kick(i * 0.14, 0.35); noise(0.08, 0.08, i * 0.14 + 0.07, 7000, null, 'highpass'); } },
     pushAppear() { for (let i = 0; i < 24; i++) noise(0.06, 0.06 + i * 0.006, i * 0.045, 1800); tone(220, 1.1, 'sawtooth', 0.12, 0, 880); },
     push() { kick(0, 1); noise(0.35, 0.35, 0, 4000, 200); tone(90, 0.4, 'square', 0.25); },
     miss() { tone(392, 0.25, 'triangle', 0.12); tone(330, 0.25, 'triangle', 0.12, 0.22); tone(262, 0.6, 'triangle', 0.12, 0.44, 200); },
-    coin() { tone(1975, 0.05, 'square', 0.05); tone(2637, 0.09, 'square', 0.05, 0.05); },
+    coin() { const d = spatial(.22, .08, .25); tone(1568, .05, 'triangle', .05, 0, null, d); tone(2093, .09, 'triangle', .05, .05, null, d); },
     open() { [784, 988, 1175].forEach((f, i) => tone(f, 0.1, 'square', 0.08, i * 0.05)); },
     fanfare(speed = 1) {
+      const dest = spatial(0, .22, 4 * speed);
       const C = [N(72), N(76), N(79)], F = [N(77), N(81), N(84)], G = [N(79), N(83), N(86)], C2 = [N(84), N(88), N(91)];
       [[C, 0], [C, .15], [C, .3], [C, .45], [F, .95], [G, 1.3], [C2, 1.65]].forEach(([fs, at], i) => {
-        chord(fs, (i === 6 ? 1.5 : .25) * speed, at * speed);
+        chord(fs, (i === 6 ? 1.5 : .25) * speed, at * speed, .055, 'triangle', dest);
         kick(at * speed, .7); noise(.3 * speed, .12, at * speed, 9000, null, 'highpass');
       });
       tone(N(48), 1.8 * speed, 'sawtooth', 0.12, 1.65 * speed);
@@ -319,7 +350,12 @@ const Snd = (() => {
       [N(76), N(79), N(83), N(88)].forEach((f, i) => tone(f, 0.18, 'sawtooth', 0.12, i * 0.09));
       chord([N(88), N(91), N(95)], 1.2, 0.4, 0.09); kick(0.4, 1); noise(1, 0.2, 0.4, 8000, null, 'highpass');
     },
-    impact() { tone(72, 1.1, 'sine', 1.0, 0, 28); tone(140, 0.4, 'square', 0.25, 0, 50); noise(1.4, 0.5, 0, 6000, 200, 'lowpass'); noise(2.2, 0.22, 0.02, 9000, null, 'highpass'); kick(0, 1); },
+    impact() {
+      const d = spatial(0, .4, 2);
+      tone(72, .8, 'sine', .65, 0, 28, d);
+      [310, 487, 731].forEach((f, i) => tone(f, .32 + i * .09, 'triangle', .09, .008, f * .7, d));
+      noise(.7, .18, .015, 3200, 350, 'lowpass', d);
+    },
     crack() { noise(0.25, 0.45, 0, 5000, 800); [2637, 3520, 4186].forEach((f, i) => tone(f, 0.25, 'triangle', 0.08, i * 0.03)); kick(0, 0.6); },
     signal() { tone(1568, 0.09, 'square', 0.1); tone(2093, 0.09, 'square', 0.1, 0.09); tone(2637, 0.5, 'square', 0.1, 0.18); tone(300, 0.6, 'sawtooth', 0.14, 0, 3000); },
     shutter() { noise(0.35, 0.4, 0, 500, 180); tone(110, 0.25, 'square', 0.25); tone(85, 0.3, 'square', 0.2, 0.12); kick(0.12, 0.8); },
@@ -330,33 +366,42 @@ const Snd = (() => {
     slash() { noise(0.4, 0.4, 0, 2500, 12000, 'highpass'); tone(2200, 0.35, 'sawtooth', 0.12, 0, 180); kick(0.18, 1); },
     rushEnd() { [N(72), N(67), N(64), N(60)].forEach((f, i) => tone(f, 0.35, 'triangle', 0.12, i * 0.25)); },
   };
+  for (const name of Object.keys(sfx)) {
+    if (['shoot', 'nail'].includes(name)) continue;
+    const play = sfx[name];
+    sfx[name] = (...args) => { duck(name === 'fanfare' ? 2.8 * (args[0] || 1) : name === 'impact' ? .8 : .3); play(...args); };
+  }
   // プチュン：一瞬で全ての音を消す
   function cut(ms) {
     if (!ctx) return; const t = ctx.currentTime;
     master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(0, t);
-    master.gain.setValueAtTime(0.7, t + ms / 1000);
+    master.gain.setValueAtTime(0.55, t + ms / 1000);
   }
-  // BGM（RUSH / 大当り中）
+  // BGM：AudioContext の同じ時計を音とランプで共有
   function bgm(mode, round = 1) {
     const stage = mode === 'jackpot' ? (round >= 8 ? 2 : round >= 5 ? 1 : 0) : 0;
     const key = `${mode}:${stage}`;
     if (bgmMode === key) return; bgmMode = key; clearInterval(bgmTimer); bgmTimer = null;
     if (!mode) return; step = 0;
-    const rushRoots = [N(45), N(45), N(41), N(43)], jpRoots = [N(48), N(53), N(55), N(48)];
+    beatTempo = { normal: 96, reach: 120, rush: 140, jackpot: 130 + stage * 6 }[mode] || 96;
+    beatEpoch = ctx ? ctx.currentTime : performance.now() / 1000;
+    const tick = 60 / beatTempo / 4;
     bgmTimer = setInterval(() => {
-      if (!ok()) return; const s = step++ % 64, bar = Math.floor(s / 16) % 4;
-      const roots = mode === 'rush' ? rushRoots : jpRoots, r = roots[bar];
-      if (s % 4 === 0) kick(0, 0.5, bgmBus);
-      if (s % 4 === 2) noise(0.04, 0.12, 0, 8000, null, 'highpass', bgmBus);
-      if (s % 8 === 4) noise(0.12, 0.22, 0, 1800, null, 'bandpass', bgmBus);
-      if (s % 2 === 0) tone(r * (s % 4 === 2 ? 2 : 1), 0.11, 'sawtooth', 0.12, 0, null, bgmBus);
-      const arp = mode === 'rush' ? [0, 3, 7, 10, 12, 10, 7, 3] : [0, 4, 7, 12, 16, 12, 7, 4];
-      if (s % 2 === 1) tone(r * 4 * Math.pow(2, arp[(s >> 1) % 8] / 12), 0.09, 'square', 0.05, 0, null, bgmBus);
-      if (stage >= 1) noise(0.025, 0.035, 0, 9500, null, 'highpass', bgmBus);
-      if (stage >= 2 && s % 4 === 0) [4, 5, 6].forEach(m => tone(r * m, 0.18, 'triangle', 0.035, 0, null, bgmBus));
-    }, mode === 'rush' ? 107 : 115 - stage * 10);
+      if (!ok()) return;
+      const elapsed = (ctx.currentTime - beatEpoch) / tick;
+      const s = Math.floor(elapsed), bar = Math.floor(s / 16) % 4;
+      if (s < step) return; step = s + 1;
+      const minor = mode !== 'jackpot', root = (minor ? [45, 41, 48, 43] : [48, 53, 55, 48])[bar];
+      const r = N(root), quiet = mode === 'normal' ? .65 : 1;
+      if (s % 4 === 0) kick(0, .30 * quiet, bgmBus);
+      if (s % 8 === 4) noise(.09, .10 * quiet, 0, 1400, null, 'bandpass', bgmBus);
+      if (s % 2 === 0) noise(.025, .025 * quiet, 0, 4500, null, 'highpass', bgmBus);
+      if (s % 2 === 0) tone(r, .14, 'triangle', .11 * quiet, 0, null, bgmBus);
+      if (s % 16 === 0) [0, minor ? 3 : 4, 7].forEach(n => tone(N(root + 12 + n), tick * 12, 'sine', .035 * quiet, 0, null, bgmBus));
+      if (s % 4 === 2 && mode !== 'normal') tone(N(root + 24 + [0, minor ? 3 : 4, 7, 12][Math.floor(s / 4) % 4]), .12, 'triangle', .035, 0, null, bgmBus);
+    }, 25);
   }
-  return { init, sfx, cut, bgm, set enabled(v) { enabled = v; }, get enabled() { return enabled; } };
+  return { init, sfx, cut, bgm, beatClock, set enabled(v) { enabled = v; }, get enabled() { return enabled; } };
 })();
 
 let voiceOn = true;
@@ -452,7 +497,7 @@ function stepBall(b, dt, ev, sound) {
     const list = nailGrid.get(gkey(i, j)); if (!list) continue;
     for (const n of list) {
       const dx = b.x - n.x, dy = b.y - n.y, dd = dx * dx + dy * dy;
-      if (dd < md * md && dd > 1e-9) { const dl = Math.sqrt(dd); const imp = collide(b, dx / dl, dy / dl, md - dl, 0.5, 0.08); if (sound && imp > 3) Snd.sfx.nail(imp); }
+      if (dd < md * md && dd > 1e-9) { const dl = Math.sqrt(dd); const imp = collide(b, dx / dl, dy / dl, md - dl, 0.5, 0.08); if (sound && imp > 3) Snd.sfx.nail(imp, b.x); }
     }
   }
   { // 風車
@@ -1540,6 +1585,11 @@ function drawLCD(t) {
   const c = lctx; c.save();
   if (L.battle) { drawBattle(c, t); drawBolts(c); drawReels(c, t, 'corner'); }
   else { drawBG(c, t); drawBolts(c); if (L.round) drawRound(c, t); else drawReels(c, t); }
+  if (!L.dim && !L.grey && !L.hit && !L.round && L.shT === 0 && lampMode.mode !== 'off') {
+    const pulse = Math.exp(-Snd.beatClock().phase * 5);
+    c.strokeStyle = L.bg === 'normal' ? `rgba(255,180,70,${.03 + pulse * .05})` : `rgba(255,70,90,${.06 + pulse * .12})`;
+    c.lineWidth = 12; c.strokeRect(6, 6, LW - 12, LH - 12);
+  }
   if (L.storm) drawStorm(c, t);
   if (L.dim > 0) { c.fillStyle = `rgba(0,0,0,${L.dim})`; c.fillRect(0, 0, LW, LH); }
   if (L.grey > 0) { c.save(); c.globalCompositeOperation = 'saturation'; c.globalAlpha = L.grey; c.fillStyle = '#808080'; c.fillRect(0, 0, LW, LH); c.globalCompositeOperation = 'source-over'; c.globalAlpha = L.grey * 0.45; c.fillStyle = '#000'; c.fillRect(0, 0, LW, LH); c.restore(); }
@@ -1657,7 +1707,7 @@ function cssShake(hard) { return; /* 画面全体は揺らさない */ }
 function cssShakeOld(hard) { const s = $('stage'); s.classList.remove('shake', 'shake-hard'); void s.offsetWidth; s.classList.add(hard ? 'shake-hard' : 'shake'); }
 let lampFlash = null;
 function edgeFlash(color, ms) { lampFlash = { col: new THREE.Color(color), t0: performance.now() / 1000, ms: ms / 1000 }; } // 筐体ランプの点滅で告知
-function whiteFlash(ms = 900) { L.flashT = rt(); const f = $('flash'); f.style.transition = 'none'; f.style.opacity = 0.12; void f.offsetWidth; f.style.transition = `opacity ${ms}ms ease-out`; f.style.opacity = 0; }
+function whiteFlash(ms = 900) { L.flashT = rt(); edgeFlash('#ffffff', ms); } // 液晶と枠の中だけで発光
 function showBig(html, cls, ms = 1500) { // 文字は液晶の中に出す
   const m = html.split(/<small>|<\/small>/), main = m[0].replace(/<[^>]+>/g, ''), sub = (m[1] || '').replace(/<[^>]+>/g, '');
   caption(main, { style: { gold: 'gold', red: 'red', rainbow: 'rainbow', blue: 'blue', white: 'silver' }[cls] || 'gold', size: 128, y: 380, dur: ms / 1000, sub });
@@ -1680,11 +1730,20 @@ function waitPush(style = '', ms = 6000) { // 筐体のボタンがせり上が�
 $('push').addEventListener('pointerdown', e => { e.preventDefault(); pushResolve && pushResolve(); });
 
 const lampMode = { mode: 'idle', t: 0 };
+let lampLastActive = performance.now() / 1000;
 function setLamp(m) { lampMode.mode = m; }
 function updateLamps(dt, t) {
   const c = new THREE.Color(), m = lampMode.mode;
+  const wallTime = performance.now() / 1000;
+  if (state.firing || state.spinning || state.jackpot) lampLastActive = wallTime;
+  const demo = !state.firing && !state.spinning && !state.jackpot && wallTime - lampLastActive > 18;
+  const { beat, phase } = Snd.beatClock();
+  const pulse = Math.exp(-phase * 5);
   for (let i = 0; i < LAMP_N; i++) {
     const f = i / LAMP_N, sp = lampSprites[i]; let o = 0;
+    const [x, y] = lampPos[i], height = y / 1100, side = Math.abs(x - 512) / 450;
+    const wave = .5 + .5 * Math.sin((height * 2 - beat) * Math.PI * 2);
+    const converge = Math.pow(.5 + .5 * Math.cos((side * 2 + beat * 2) * Math.PI * 2), 5);
     if (m === 'celebration' && celebration) {
       const age = celebrationAge(), beats = [0, .15, .3, .45, .95, 1.3, 1.65];
       const since = age - beats.filter(b => b <= age).pop();
@@ -1693,19 +1752,20 @@ function updateLamps(dt, t) {
       else c.setHSL((f * 2 - age * .6 + 10) % 1, 1, .58);
       o = .45 + .55 * Math.exp(-since * 9);
     }
-    else if (m === 'rainbow') { c.setHSL((f * 3 + t * 0.8) % 1, 1, 0.55); o = 0.85; }
-    else if (m === 'red') { c.set(0xff1020); o = Math.sin(t * 20) > 0 ? 0.95 : 0.12; }
-    else if (m === 'gold') { c.setRGB(1, 0.75, 0.2); o = 0.6 + 0.35 * Math.sin(t * 15 + i); }
-    else if (m === 'rush') { const on = ((i + Math.floor(t * 18)) % 6) < 3; c.setRGB(1, on ? 0.55 : 0.1, 0.05); o = on ? 0.85 : 0.18; }
-    else if (m === 'sp') { const on = ((i + Math.floor(t * 24)) % 8) < 2; c.setRGB(on ? 0.85 : 0.5, 0.3, 1); o = on ? 0.9 : 0.22; }
     else if (m === 'off') o = 0;
-    else if (m === 'white') { c.setRGB(1, 1, 1); o = 1; }
-    else { const w = 0.5 + 0.5 * Math.sin(f * Math.PI * 6 - t * 2.5); c.setRGB(1, 0.25 + w * 0.45, 0.1); o = 0.1 + w * 0.25 + (Math.sin(t * 9 + i * 2.3) > 0.95 ? 0.4 : 0); }
+    else if (m === 'white') { c.setRGB(1, 1, 1); o = phase % .25 < .10 ? 1 : .12; }
+    else if (m === 'rainbow') { c.setHSL((height + side * .2 + beat * .16) % 1, 1, .55); o = .35 + .55 * wave; }
+    else if (m === 'red') { c.set(0xff1020); o = .12 + .82 * converge; }
+    else if (m === 'gold') { c.setRGB(1, .7, .12); o = .25 + .5 * converge + .15 * pulse; }
+    else if (m === 'rush') { const chase = wave > .65; c.setRGB(1, chase ? .65 : .035, .02); o = .18 + .7 * wave; }
+    else if (m === 'sp') { c.setHSL((height * .7 + beat * .22 + side * .2) % 1, 1, .55); o = .2 + .7 * converge; }
+    else if (demo) { c.setHSL((height * .5 + wallTime * .025) % 1, .85, .55); o = .18 + .17 * Math.sin(height * 5 - wallTime * .7) ** 2; }
+    else { c.setRGB(1, .4, .12); o = .12 + .18 * (.5 + .5 * Math.sin(beat * Math.PI / 4)); }
     if (lampFlash) { const age = performance.now() / 1000 - lampFlash.t0; if (age < lampFlash.ms) { c.copy(lampFlash.col); o = Math.sin(age * 40) > 0 ? 1 : 0.25; } }
     sp.material.color.copy(c); sp.material.opacity = o;
   }
 }
-function idleLook() { L.bg = state.mode === 'rush' ? 'rush' : 'normal'; setLamp(state.mode === 'rush' ? 'rush' : 'idle'); }
+function idleLook() { Snd.bgm(state.mode === 'rush' ? 'rush' : 'normal'); L.bg = state.mode === 'rush' ? 'rush' : 'normal'; setLamp(state.mode === 'rush' ? 'rush' : 'idle'); }
 
 /* =========================================================
  *  9. 変動シーケンス（async）
@@ -1738,7 +1798,7 @@ async function runSpin(e) {
     return endSpin(e);
   }
   // ---- リーチ ----
-  Snd.sfx.reach(); say('リーチ'); L.bg = 'reach'; reels[1].speed = 8; shakeCam(0.25, 0.3);
+  Snd.sfx.reach(); say('リーチ'); L.bg = 'reach'; setLamp('red'); Snd.bgm('reach'); reels[1].speed = 8; shakeCam(0.25, 0.3);
   caption('リーチ!!', { color: '#ff3b5b', size: 130, y: 384, dur: 1.1 });
   await sleep(1200);
   if (!e.sp) {
@@ -1909,7 +1969,7 @@ $('autoAim').onchange = e => { state.autoAim = e.target.checked; aimAuto(); };
 $('probSel').onchange = e => { state.probMode = e.target.value; };
 $('patSel').onchange = e => { state.forcePattern = e.target.value || null; };
 $('btnForce').onclick = () => { state.forceNext = !state.forceNext; $('btnForce').classList.toggle('on', state.forceNext); };
-$('btnSnd').onclick = () => { Snd.enabled = !Snd.enabled; $('btnSnd').textContent = Snd.enabled ? '音 ON' : '音 OFF'; if (!Snd.enabled) Snd.bgm(null); else if (state.mode === 'rush') Snd.bgm('rush'); };
+$('btnSnd').onclick = () => { Snd.enabled = !Snd.enabled; $('btnSnd').textContent = Snd.enabled ? '音 ON' : '音 OFF'; if (!Snd.enabled) Snd.bgm(null); else Snd.bgm(state.jackpot ? 'jackpot' : L.bg === 'reach' || L.bg === 'sp' ? 'reach' : state.mode === 'rush' ? 'rush' : 'normal', L.round ? L.round.n : 1); };
 $('menuBtn').onclick = () => { document.body.classList.toggle('menu-open'); setTimeout(resize, 30); };
 $('btnView').onclick = () => { state.view = state.view === 'full' ? 'board' : 'full'; $('btnView').textContent = state.view === 'full' ? '盤面アップ' : '全体表示'; resize(); };
 $('btnVoice').onclick = () => { voiceOn = !voiceOn; $('btnVoice').textContent = voiceOn ? '声 ON' : '声 OFF'; };
