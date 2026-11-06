@@ -2246,26 +2246,89 @@ function drawSerif(c, t) {
   c.lineWidth = 12; c.strokeStyle = '#090609'; c.strokeText(q.text, 638, 628, 660);
   c.fillStyle = '#ff9d22'; c.fillText(q.text, 638, 628, 660); c.restore();
 }
+// 巨大リーチ専用。通常図柄の縁を残し、本体だけを溶岩／氷の質感にする。
+const bigSymCache = {};
+function bigSymSprite(n) {
+  if (bigSymCache[n]) return bigSymCache[n];
+  const base = symSprite(n), cv = document.createElement('canvas');
+  cv.width = base.width; cv.height = base.height;
+  const g = cv.getContext('2d'), lava = n % 2 === 1;
+  g.drawImage(base, 0, 0);
+  const body = document.createElement('canvas'); body.width = cv.width; body.height = cv.height;
+  const q = body.getContext('2d');
+  q.setTransform(1, 0, -.16, 1, cv.width / 2 + 14, cv.height / 2 + 10);
+  q.font = `310px ${FONT}`; q.textAlign = 'center'; q.textBaseline = 'middle';
+  q.fillText(String(n), 0, 0); q.resetTransform(); q.globalCompositeOperation = 'source-atop';
+  const fill = q.createLinearGradient(0, 0, 300, 400);
+  [lava ? '#ffad42' : '#e0ffff', lava ? '#9c1720' : '#368edc', lava ? '#29090e' : '#073573', lava ? '#dc3619' : '#9defff'].forEach((col, i) => fill.addColorStop(i / 3, col));
+  q.fillStyle = fill; q.fillRect(0, 0, cv.width, cv.height);
+  // 決定的な折れ線をキャッシュし、毎フレームの乱数やテクスチャ生成を避ける。
+  for (let i = 0; i < 15; i++) {
+    const x = (i * 83 + n * 19) % 380, y = (i * 47) % 120;
+    q.beginPath(); q.moveTo(x, y);
+    for (let j = 1; j <= 6; j++) {
+      const px = x + Math.sin(i * 2.7 + j * 1.9) * (lava ? 34 : 16), py = y + j * 55;
+      q.lineTo(px, py);
+      if (j % 2 === 0) { q.lineTo(px + 28, py - 24); q.moveTo(px, py); }
+    }
+    q.shadowColor = lava ? '#ff5a00' : '#8defff'; q.shadowBlur = 9;
+    q.strokeStyle = lava ? '#e84a0a' : '#47bded'; q.lineWidth = lava ? 7 : 4; q.stroke();
+    q.strokeStyle = lava ? '#ffe291' : '#edffff'; q.lineWidth = 1.5; q.stroke();
+  }
+  g.drawImage(body, 0, 0);
+  // 余白と斜体による左右差を除き、見えている図柄を中央に置く。
+  const pixels = g.getImageData(0, 0, cv.width, cv.height).data;
+  let left = cv.width, top = cv.height, right = 0, bottom = 0;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+    if (pixels[(y * cv.width + x) * 4 + 3] < 16) continue;
+    left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y);
+  }
+  const trimmed = document.createElement('canvas'); trimmed.width = right - left + 1; trimmed.height = bottom - top + 1;
+  trimmed.getContext('2d').drawImage(cv, left, top, trimmed.width, trimmed.height, 0, 0, trimmed.width, trimmed.height);
+  return bigSymCache[n] = trimmed;
+}
+document.fonts && document.fonts.ready.then(() => { for (const k in bigSymCache) delete bigSymCache[k]; });
 function drawBigReach(c, t) {
   const b = L.big, age = rt() - b.stepAt;
   c.save(); c.beginPath(); c.rect(0, 0, LW, LH); c.clip();
-  c.fillStyle = b.phase === 'drop' ? '#080b14' : '#160916'; c.fillRect(0, 0, LW, LH);
+  const hot = b.power > .5, cx = LW / 2, cy = 340;
+  const bg = c.createRadialGradient(cx, cy, 40, cx, cy, 760);
+  bg.addColorStop(0, hot ? '#a33416' : '#245cba');
+  bg.addColorStop(.45, hot ? '#621529' : '#142e83');
+  bg.addColorStop(1, hot ? '#220b21' : '#080f36');
+  c.fillStyle = bg; c.fillRect(0, 0, LW, LH);
   if (b.phase !== 'drop') {
+    c.save(); c.globalCompositeOperation = 'lighter';
     for (let i = 0; i < 64; i++) {
-      const a = i * Math.PI / 32, r = 160 + ((t * 390 + i * 31) % 460);
-      c.strokeStyle = b.power > .5 ? `hsla(${i * 23 + t * 70},100%,78%,.65)` : 'rgba(255,255,255,.45)';
-      c.lineWidth = 2 + b.power * 5; c.beginPath(); c.moveTo(512 + Math.cos(a) * r, 400 + Math.sin(a) * r); c.lineTo(512 + Math.cos(a) * (r + 180), 400 + Math.sin(a) * (r + 180)); c.stroke();
+      const a = i * Math.PI / 32, r = 100 + ((t * 390 + i * 31) % 560);
+      const dx = Math.cos(a), dy = Math.sin(a);
+      const ray = c.createLinearGradient(cx + dx * r, cy + dy * r, cx + dx * (r + 220), cy + dy * (r + 220));
+      ray.addColorStop(0, 'rgba(255,255,255,0)'); ray.addColorStop(.4, 'rgba(235,250,255,.75)');
+      ray.addColorStop(1, hot ? 'rgba(255,185,60,.65)' : `hsla(${i * 23 + t * 70},100%,72%,.6)`);
+      c.strokeStyle = ray; c.lineWidth = 1.5 + b.power * 3;
+      c.beginPath(); c.moveTo(cx + dx * r, cy + dy * r); c.lineTo(cx + dx * (r + 220), cy + dy * (r + 220)); c.stroke();
     }
+    const sweep = (t % 3.2) / .7;
+    if (sweep < 1) {
+      c.save(); c.translate(-300 + sweep * 1700, cy); c.rotate(.35);
+      const light = c.createLinearGradient(-65, 0, 65, 0);
+      light.addColorStop(0, 'rgba(180,230,255,0)'); light.addColorStop(.5, hot ? 'rgba(255,224,140,.35)' : 'rgba(180,230,255,.35)'); light.addColorStop(1, 'rgba(180,230,255,0)');
+      c.fillStyle = light; c.fillRect(-65, -700, 130, 1400); c.restore();
+    }
+    c.restore();
   }
   if (b.phase === 'aligned') {
-    for (let i = 0; i < 3; i++) c.drawImage(symSprite(b.target), i * 330 - 10, 60, 370, 710);
+    const sp = bigSymSprite(b.target), h = 580, w = Math.min(310, h * sp.width / sp.height);
+    for (let i = 0; i < 3; i++) c.drawImage(sp, 182 + i * 330 - w / 2, cy - h / 2, w, h);
   } else {
-    const dy = b.phase === 'feed' ? -(Math.max(0, 1 - age / .8) ** 3) * 760 : 0;
-    c.drawImage(symSprite(b.n), 145, -65 + dy, 790, 940);
+    // 送りも中央固定。最大高さ600px（液晶の75%）、下端640pxで保留行を避ける。
+    const scale = b.phase === 'feed' ? 1 - .12 * Math.max(0, 1 - age / .8) ** 3 : 1;
+    const sp = bigSymSprite(b.n), h = 600 * scale, w = h * sp.width / sp.height;
+    c.drawImage(sp, cx - w / 2, cy - h / 2, w, h);
     c.drawImage(symSprite(b.target), 18, 10, 110, 116); c.drawImage(symSprite(b.target), 128, 10, 110, 116);
     if (age < 1.1 && b.phase === 'feed') for (let i = 0; i < 24; i++) {
       const a = i * 2.4, r = age * (210 + i * 12);
-      c.save(); c.translate(512 + Math.cos(a) * r, 400 + Math.sin(a) * r + age * age * 130); c.rotate(a + age * 5);
+      c.save(); c.translate(cx + Math.cos(a) * r, cy + Math.sin(a) * r + age * age * 130); c.rotate(a + age * 5);
       c.fillStyle = i % 2 ? '#c6ddf4' : '#705c38'; c.fillRect(-9, -4, 18, 8); c.restore();
     }
   }
