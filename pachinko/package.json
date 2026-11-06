@@ -1,0 +1,12 @@
+{
+  "name": "thunder-pachinko",
+  "private": true,
+  "description": "P THUNDER 雷牙（1ファイル完結の3Dパチンコ試作）のテスト用設定",
+  "scripts": {
+    "test": "node tests/check.cjs",
+    "test:quick": "node tests/check.cjs --quick"
+  },
+  "devDependencies": {
+    "three": "0.160.0"
+  }
+}

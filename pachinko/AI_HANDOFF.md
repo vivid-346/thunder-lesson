@@ -12,6 +12,11 @@ python3 -m http.server 8000   # → http://localhost:8000/
 
 ES Modules を使うため `file://` で直接開くと動きません。CDN（cdn.jsdelivr.net）への接続が必要です。
 
+## 開発の進め方とテスト
+
+- 役割：Codex がレビューと実装、Claude が依頼・確認・テスト・コミット・プッシュ、ユーザーが方向決めと実機確認。作業ルールは `AGENTS.md`
+- 自動チェック：`npm install` のあと `node tests/check.cjs`（`--quick` で短縮版）。読み込み・入賞率・当り方 A/B/C/D/F の進行を確認し、液晶画像を `tests/out/` に保存します
+
 ## スペック（`SPEC` 定数、section 1）
 
 | 項目 | 値 | コード |

@@ -1,3 +1,5 @@
 .DS_Store
 Thumbs.db
 *.log
+pachinko/node_modules/
+pachinko/tests/out/
