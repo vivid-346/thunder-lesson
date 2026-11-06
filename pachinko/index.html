@@ -14,6 +14,8 @@ html,body{margin:0;height:100%;background:#05020c;overflow:hidden;color:#fff;
   font-family:"Dela Gothic One","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic","Meiryo",sans-serif;
   user-select:none;-webkit-user-select:none;touch-action:manipulation}
 #stage{position:fixed;inset:0}
+#cameraControls{position:fixed;z-index:6;right:calc(10px + env(safe-area-inset-right,0px));bottom:var(--camera-bottom,100px);display:flex;gap:6px}
+#cameraControls button{min-width:48px;min-height:48px;font-size:18px;touch-action:manipulation;background:rgba(14,6,30,.88);color:white;border:1px solid var(--line);border-radius:10px}
 #gl{display:block;width:100%;height:100%;touch-action:none}
 #stage.shake{animation:shake .45s linear}
 #stage.shake-hard{animation:shakeHard 1s linear}
@@ -137,6 +139,7 @@ body:not(.menu-open) #hud,body:not(.menu-open) #controls .more{display:none!impo
 <body>
 <div id="stage"><canvas id="gl"></canvas></div>
 
+<div id="cameraControls" aria-label="表示の拡大・縮小"><button id="zoomIn" aria-label="拡大">＋</button><button id="zoomOut" aria-label="縮小">−</button><button id="zoomReset">戻す</button></div>
 <button id="menuBtn" aria-label="メニュー">☰ メニュー</button>
 <div id="hud" class="panel">
   <div class="title">P THUNDER 雷牙<small>ミドル 1/319.9 ・ オリジナル台</small></div>
@@ -176,6 +179,7 @@ body:not(.menu-open) #hud,body:not(.menu-open) #controls .more{display:none!impo
     <option value="F">F ハイパー</option>
   </select>
   <button id="btnSnd">音 ON</button>
+  <button id="btnHall" aria-pressed="true">ホール音 ON</button>
   <button id="btnVoice">声 ON</button>
   </span>
 </div>
@@ -275,7 +279,42 @@ const Snd = (() => {
     bgmBus = ctx.createGain(); bgmBus.gain.value = 0.32; bgmBus.connect(master);
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    hallSync();
   }
+  let hallEnabled = true, hallBus = null, hallTimer = null;
+  function hallSync() {
+    if (!ctx) return;
+    if (!hallBus) {
+      hallBus = ctx.createGain(); hallBus.connect(master);
+      const src = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
+      src.buffer = noiseBuf; src.loop = true; filter.type = 'lowpass'; filter.frequency.value = 550;
+      gain.gain.value = .045; src.connect(filter); filter.connect(gain); gain.connect(hallBus); src.start();
+      // 同じタイマーで遠方の玉流れと短いオリジナル音型を鳴らす。
+      hallTimer = setInterval(() => {
+        if (!enabled || !hallEnabled || document.hidden || ctx.state !== 'running') return;
+        const pan = ctx.createStereoPanner(); pan.pan.value = Math.random() * 1.6 - .8; pan.connect(hallBus);
+        const t = ctx.currentTime;
+        if (Math.random() < .65) {
+          const n = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+          n.buffer = noiseBuf; f.type = 'bandpass'; f.frequency.value = 2200; f.Q.value = .7;
+          g.gain.setValueAtTime(.001, t);
+          for (let i = 0; i < 16; i++) g.gain.linearRampToValueAtTime(i % 2 ? .002 : .028, t + i * .075);
+          g.gain.linearRampToValueAtTime(0, t + 1.3); n.connect(f); f.connect(g); g.connect(pan); n.start(); n.stop(t + 1.4);
+          n.onended = () => { n.disconnect(); f.disconnect(); g.disconnect(); };
+        } else {
+          [0, 3, 7, 12, 7].forEach((note, i) => {
+            const o = ctx.createOscillator(), g = ctx.createGain(), at = t + i * .16;
+            o.type = 'sine'; o.frequency.value = 440 * Math.pow(2, note / 12);
+            g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(.018, at + .015); g.gain.exponentialRampToValueAtTime(.0001, at + .35);
+            o.connect(g); g.connect(pan); o.start(at); o.stop(at + .4); o.onended = () => { o.disconnect(); g.disconnect(); };
+          });
+        }
+        setTimeout(() => pan.disconnect(), 2200);
+      }, 3400);
+    }
+    hallBus.gain.setTargetAtTime(enabled && hallEnabled && !document.hidden ? 1 : 0, ctx.currentTime, .1);
+  }
+  document.addEventListener('visibilitychange', hallSync);
   const ok = () => ctx && enabled;
   // 残響用ノードは各音の終了後に解放し、長時間遊んでも溜めない。
   function spatial(pan = 0, tail = .1, life = 1) {
@@ -401,7 +440,7 @@ const Snd = (() => {
       if (s % 4 === 2 && mode !== 'normal') tone(N(root + 24 + [0, minor ? 3 : 4, 7, 12][Math.floor(s / 4) % 4]), .12, 'triangle', .035, 0, null, bgmBus);
     }, 25);
   }
-  return { init, sfx, cut, bgm, beatClock, set enabled(v) { enabled = v; }, get enabled() { return enabled; } };
+  return { init, sfx, cut, bgm, beatClock, set hall(v) { hallEnabled = v; hallSync(); }, get hall() { return hallEnabled; }, set enabled(v) { enabled = v; hallSync(); }, get enabled() { return enabled; } };
 })();
 
 let voiceOn = true;
@@ -582,6 +621,29 @@ const cabImg = new Image();
 const cabTex = new THREE.Texture(cabImg); cabTex.colorSpace = THREE.SRGBColorSpace; cabTex.anisotropy = 8;
 const cabMesh = new THREE.Mesh(new THREE.PlaneGeometry(CAB_W, CAB_H), new THREE.MeshBasicMaterial({ map: cabTex, toneMapped: false }));
 scene.add(cabMesh);
+// 隣台は共有テクスチャの板と少数の発光だけで構成する。
+const neighbors = [];
+for (const n of [-3, -2, -1, 1, 2, 3]) {
+  const group = new THREE.Group(); group.position.set(n * (CAB_W + .45), 0, -.7); scene.add(group);
+  const plate = new THREE.Mesh(cabMesh.geometry, new THREE.MeshBasicMaterial({ map: cabTex, color: 0x555566, toneMapped: false })); group.add(plate);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(6.8, 5.2), new THREE.MeshBasicMaterial({ color: 0x225577, transparent: true, opacity: .4, blending: THREE.AdditiveBlending, depthWrite: false }));
+  screen.position.set(0, UY(545), .03); group.add(screen);
+  const lamps = [];
+  for (const x of [-7.5, 7.5]) {
+    const lamp = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: 0x5577ff, transparent: true, opacity: .4, blending: THREE.AdditiveBlending, depthWrite: false }));
+    lamp.position.set(x, 5, .1); lamp.scale.set(3, 12, 1); group.add(lamp); lamps.push(lamp);
+  }
+  neighbors.push({ screen, lamps, next: Math.random() * 2 });
+}
+function updateHall(t) {
+  for (const n of neighbors) {
+    if (t < n.next) continue;
+    n.next = t + .25 + Math.random() * .9;
+    const hue = Math.random(); n.screen.material.color.setHSL(hue, .7, .25 + Math.random() * .25);
+    n.screen.material.opacity = .15 + Math.random() * .35;
+    for (const l of n.lamps) { l.material.color.setHSL(hue, .9, .55); l.material.opacity = .12 + Math.random() * .4; }
+  }
+}
 // 画面の余白：画像をぼかして暗くした背景
 const bgTex = canvasTex(512, 512);
 const bgMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: bgTex, toneMapped: false }));
@@ -1971,7 +2033,8 @@ $('patSel').onchange = e => { state.forcePattern = e.target.value || null; };
 $('btnForce').onclick = () => { state.forceNext = !state.forceNext; $('btnForce').classList.toggle('on', state.forceNext); };
 $('btnSnd').onclick = () => { Snd.enabled = !Snd.enabled; $('btnSnd').textContent = Snd.enabled ? '音 ON' : '音 OFF'; if (!Snd.enabled) Snd.bgm(null); else Snd.bgm(state.jackpot ? 'jackpot' : L.bg === 'reach' || L.bg === 'sp' ? 'reach' : state.mode === 'rush' ? 'rush' : 'normal', L.round ? L.round.n : 1); };
 $('menuBtn').onclick = () => { document.body.classList.toggle('menu-open'); setTimeout(resize, 30); };
-$('btnView').onclick = () => { state.view = state.view === 'full' ? 'board' : 'full'; $('btnView').textContent = state.view === 'full' ? '盤面アップ' : '全体表示'; resize(); };
+$('btnHall').onclick = () => { Snd.hall = !Snd.hall; $('btnHall').textContent = Snd.hall ? 'ホール音 ON' : 'ホール音 OFF'; $('btnHall').setAttribute('aria-pressed', String(Snd.hall)); };
+$('btnView').onclick = () => { state.view = state.view === 'full' ? 'board' : 'full'; $('btnView').textContent = state.view === 'full' ? '盤面アップ' : '全体表示'; resetView(); resize(); };
 $('btnVoice').onclick = () => { voiceOn = !voiceOn; $('btnVoice').textContent = voiceOn ? '声 ON' : '声 OFF'; };
 addEventListener('keydown', e => {
   if (!state.started) { if (e.code === 'Enter' || e.code === 'Space') startGame(); return; }
@@ -1988,7 +2051,13 @@ function pickAt(ev) {
   ray.setFromCamera(ndc, camera); const hit = ray.intersectObjects(CAB.pickables, false)[0]; return hit ? hit.object.userData.act : null;
 }
 renderer.domElement.addEventListener('pointerdown', ev => {
-  if (!state.started) return; const act = pickAt(ev); if (!act) return; ev.preventDefault();
+  if (!state.started) return;
+  pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  renderer.domElement.setPointerCapture(ev.pointerId);
+  if (pointers.size > 1) { handleDrag = null; panDrag = null; pinchDistance = pointerDistance(); return; }
+  const act = pickAt(ev);
+  if (!act) { panDrag = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, startX: ev.clientX, startY: ev.clientY, moved: false }; return; }
+  lastTap = null; ev.preventDefault();
   if (act === 'push' || (act === 'lcd' && pushResolve)) { pushPress = 1; if (pushResolve) pushResolve(); else Snd.sfx.press(); }
   else if (act === 'lcd') return;
   else if (act === 'lend') { if (state.stored >= SPEC.lend) { state.stored -= SPEC.lend; addBalls(SPEC.lend); Snd.sfx.coin(); caption('再プレイ 125玉', { color: '#4dff6a', size: 70, y: 620, dur: 1.2 }); } else if (state.credit >= 500) { state.credit -= 500; addBalls(SPEC.lend); Snd.sfx.coin(); caption('貸出 125玉', { color: '#4dff6a', size: 70, y: 620, dur: 1.2 }); } else caption('残高が足りません', { color: '#ff6a6a', size: 64, y: 620, dur: 1.4 }); }
@@ -1997,10 +2066,37 @@ renderer.domElement.addEventListener('pointerdown', ev => {
   else if (act === 'handle') { handleDrag = { x: ev.clientX, y: ev.clientY, p: state.power }; renderer.domElement.setPointerCapture(ev.pointerId); }
 });
 renderer.domElement.addEventListener('pointermove', ev => {
+  if (pointers.has(ev.pointerId)) pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (pointers.size > 1) {
+    const d = pointerDistance(); if (pinchDistance > 0) changeZoom(d / pinchDistance); pinchDistance = d; return;
+  }
+  if (panDrag && panDrag.id === ev.pointerId) {
+    const dx = ev.clientX - panDrag.x, dy = ev.clientY - panDrag.y;
+    if (Math.hypot(ev.clientX - panDrag.startX, ev.clientY - panDrag.startY) > 6) panDrag.moved = true;
+    const upp = 2 * baseCamZ / VIEW.zoom * Math.tan(camera.fov * Math.PI / 360) / innerHeight;
+    if (VIEW.zoom > 1) { VIEW.panX -= dx * upp; VIEW.panY += dy * upp; applyView(); }
+    panDrag.x = ev.clientX; panDrag.y = ev.clientY; return;
+  }
   if (!handleDrag) { renderer.domElement.style.cursor = state.started && pickAt(ev) ? 'pointer' : 'default'; return; }
   const d = (ev.clientX - handleDrag.x) - (ev.clientY - handleDrag.y); setPower(handleDrag.p + d * 0.35); if (!needRight()) state.leftPower = state.power;
 });
-const endDrag = () => { handleDrag = null; };
+const pointers = new Map(); let panDrag = null, pinchDistance = 0, lastTap = null;
+function pointerDistance() { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); }
+const endDrag = ev => {
+  if (!pointers.has(ev.pointerId)) return;
+  if (ev.type === 'pointerup' && panDrag && !panDrag.moved && pointers.size === 1) {
+    const t = performance.now();
+    if (lastTap && t - lastTap.t < 330 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 28) { resetView(); lastTap = null; }
+    else lastTap = { t, x: ev.clientX, y: ev.clientY };
+  } else lastTap = null;
+  pointers.delete(ev.pointerId); handleDrag = null; panDrag = null; pinchDistance = 0;
+};
+renderer.domElement.addEventListener('lostpointercapture', endDrag);
+renderer.domElement.addEventListener('wheel', ev => { ev.preventDefault(); changeZoom(Math.exp(-Math.max(-150, Math.min(150, ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? innerHeight : 1))) * .002)); }, { passive: false });
+renderer.domElement.addEventListener('dblclick', ev => { if (!pickAt(ev)) { ev.preventDefault(); resetView(); } });
+$('zoomIn').onclick = () => changeZoom(1.25);
+$('zoomOut').onclick = () => changeZoom(1 / 1.25);
+$('zoomReset').onclick = resetView;
 renderer.domElement.addEventListener('pointerup', endDrag); renderer.domElement.addEventListener('pointercancel', endDrag);
 function startGame() { if (state.started) return; Snd.init(); state.started = true; $('start').style.display = 'none'; setFire(true); aimAuto(); }
 $('startBtn').onclick = startGame;
@@ -2044,7 +2140,14 @@ function updateHUD() {
  *  11. メインループ
  * ========================================================= */
 const camZoom = { k: 0, target: 0 };
-const VIEW = { cx: 0, cy: -0.4, hw: 9.2, hh: 14.2 };
+const VIEW = { cx: 0, cy: -0.4, hw: 9.2, hh: 14.2, zoom: 1, panX: 0, panY: 0 };
+function applyView() {
+  VIEW.panX = clamp(VIEW.panX, -CAB_W * 1.5, CAB_W * 1.5); VIEW.panY = clamp(VIEW.panY, -CAB_H / 2, CAB_H / 2);
+  camera.position.set(VIEW.cx + VIEW.panX, VIEW.cy + VIEW.panY, baseCamZ / VIEW.zoom);
+  camera.lookAt(VIEW.cx + VIEW.panX, VIEW.cy + VIEW.panY, 0); camera.updateMatrixWorld();
+}
+function changeZoom(factor) { VIEW.zoom = clamp(VIEW.zoom * factor, .42, 3); applyView(); }
+function resetView() { VIEW.zoom = 1; VIEW.panX = VIEW.panY = 0; applyView(); }
 let baseCamZ = 30, zoomZ = 20, bloomBoost = 0, fireTimer = 0, last = performance.now();
 function resize() {
   const w = innerWidth, h = innerHeight; renderer.setSize(w, h); composer.setSize(w, h); bloom.resolution.set(w, h);
@@ -2057,7 +2160,8 @@ function resize() {
   const hhNeed = halfH * h / avail, hwNeed = halfW;
   baseCamZ = Math.max(hhNeed / f, hwNeed / (f * camera.aspect));
   const upp = 2 * baseCamZ * f / h; VIEW.cy = cY - (padB - padT) / 2 * upp; VIEW.cx = 0; zoomZ = Math.min(baseCamZ, Math.max(7 / f, 6.4 / (f * camera.aspect)));
-  bgMesh.scale.set(260, 160, 1); camera.updateProjectionMatrix();
+  document.documentElement.style.setProperty('--camera-bottom', `${Math.max(10, h - ctl.top + 10)}px`);
+  bgMesh.scale.set(260, 160, 1); camera.updateProjectionMatrix(); applyView();
 }
 addEventListener('resize', resize); resize(); setTimeout(resize, 300); document.fonts && document.fonts.ready.then(resize);
 
@@ -2108,16 +2212,14 @@ function updateGadgets(dt, t) {
 }
 
 function updateCamera(dt) {
-  // 台の視点は固定。揺れはごく小さく（迫力は液晶内で出す）
-  shake.t = Math.max(0, shake.t - dt); const a = shake.t > 0 ? shake.amp * Math.min(1, shake.t * 2) * 0.12 : 0; if (shake.t <= 0) shake.amp = 0;
-  camera.position.set(VIEW.cx + rand(-a, a), VIEW.cy + rand(-a, a), baseCamZ);
-  camera.lookAt(VIEW.cx, VIEW.cy, 0);
+  // 表示はユーザー入力と画面サイズ変更だけで更新する。演出からは動かさない。
+  shake.t = Math.max(0, shake.t - dt); if (shake.t <= 0) shake.amp = 0;
 }
 
 function frame() {
   const tNow = performance.now(); const dt = Math.min(1 / 12, (tNow - last) / 1000); last = tNow; now += dt;
   physics(dt); updateReels(dt); updateParticles(dt); updateSummon(dt); updateGroup(dt); updateGadgets(dt, now); updateLamps(dt, now); updateCamera(dt);
-  drawLCD(now);
+  updateHall(now); drawLCD(now);
   hudT -= dt; if (hudT <= 0) { hudT = 0.1; updateHUD(); }
   composer.render();
   requestAnimationFrame(frame);
