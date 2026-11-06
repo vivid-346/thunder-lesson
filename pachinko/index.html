@@ -1217,18 +1217,20 @@ const SYM = {}; for (let n = 1; n <= 9; n++) SYM[n] = n === 7 ? ['#ff1a2a', '#50
 const symKind = n => n === 7 ? 'seven' : n % 2 ? 'red' : 'silver';
 const reels = [0, 1, 2].map(() => ({ pos: Math.random() * 9, speed: 0, state: 'stop', from: 0, to: 0, t: 0, dur: 0.4 }));
 const symAt = idx => (((Math.round(idx) % 9) + 9) % 9) + 1;
-function reelsStart() { reels.forEach((r, i) => { r.state = 'spin'; r.speed = 22 + i; }); }
+function reelsStart() { reels.forEach((r, i) => { r.state = 'spin'; r.speed = 36 + i * 2; }); }
 function stopReel(i, sym, durMul = 1) {
   const r = reels[i]; let P = Math.ceil(r.pos) + 2; while (symAt(P) !== sym) P++;
-  r.state = 'stopping'; r.from = r.pos; r.to = P; r.t = 0; r.dur = Math.max(0.3, (P - r.pos) / 22 * 1.6) * durMul;
+  r.state = 'stopping'; r.from = r.pos; r.to = P; r.t = 0; r.dur = clamp(0.18 * durMul, 0.16, 0.25);
 }
 function updateReels(dt) {
   reels.forEach((r, i) => {
     if (r.state === 'spin') r.pos += r.speed * dt;
     else if (r.state === 'stopping') {
-      r.t += dt; const x = clamp(r.t / r.dur, 0, 1); const c1 = 1.7, c3 = c1 + 1;
-      const e = 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
-      r.pos = r.from + (r.to - r.from) * e; if (x >= 1) { r.pos = r.to; r.state = 'stop'; if (lampMode.mode !== 'off') CUES.stop(i); }
+      r.t += dt; const x = clamp(r.t / r.dur, 0, 1);
+      // 素早く制動し、距離によらず小さく揺れ戻って停止する。
+      const travel = Math.min(1, x / .65);
+      const rebound = x < .65 ? 0 : .08 * Math.sin((x - .65) / .35 * Math.PI);
+      r.pos = r.from + (r.to - r.from) * (1 - Math.pow(1 - travel, 2)) + rebound; if (x >= 1) { r.pos = r.to; r.state = 'stop'; if (lampMode.mode !== 'off') CUES.stop(i); }
     }
   });
 }
@@ -1664,7 +1666,7 @@ function battle(phase) {
 }
 function once(B, key, fn) { if (!B.fired[key]) { B.fired[key] = 1; fn(); } }
 function drawBattle(c, t) {
-  const B = L.battle, a = rt() - B.t0, hot = B.hot;
+  const B = L.battle, a = (rt() - B.t0) * (state.mode === 'rush' ? 1 / .35 : 1), hot = B.hot;
   c.save();
   if (B.shake > 0.5) { c.translate(rand(-B.shake, B.shake), rand(-B.shake, B.shake)); B.shake *= 0.88; }
   stormBG(c, t, hot);
@@ -1672,10 +1674,10 @@ function drawBattle(c, t) {
   const glow = hot >= 4 ? '#ffd040' : hot >= 3 ? '#ff6050' : '#6ac8ff';
   let hx = 280, hy = 700, hs = 1.0, hp = { arm: 0.4, glow }, bx = 790, by = 720, bs = 0.95, bp = { mouth: 0.2, claw: 0 };
   if (B.phase === 'intro') {
-    hx = lerp(-260, 280, ease(a / 0.7)); bx = lerp(1350, 790, ease((a - 0.15) / 0.7));
-    c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = ease((a - 0.5) / 0.3);
+    hx = lerp(-260, 280, ease(a / 0.2)); bx = lerp(1350, 790, ease((a - 0.04) / 0.2));
+    c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = ease((a - 0.12) / 0.15);
     c.fillStyle = 'rgba(255,255,255,.08)'; c.beginPath(); c.moveTo(560, 0); c.lineTo(620, 0); c.lineTo(460, LH); c.lineTo(400, LH); c.fill(); c.restore();
-    once(B, 'vs', () => setTimeout(() => { spawnBolt('#ffffff', 2, 3); CUES.attack(); }, 550));
+    once(B, 'vs', () => setTimeout(() => { if (L.battle !== B) return; spawnBolt('#ffffff', 2, 3); CUES.attack(); }, state.mode === 'rush' ? 70 : 200));
   } else if (B.phase === 'clash') {
     const k1 = ease(a / 0.3), k2 = ease((a - 1.0) / 0.25);
     hx = a < 0.6 ? lerp(280, 440, k1) : a < 1.0 ? lerp(440, 300, ease((a - 0.6) / 0.3)) : lerp(300, 450, k2);
@@ -2090,7 +2092,7 @@ function whiteFlash(ms = 900) { L.flashT = rt(); edgeFlash('#ffffff', ms); } // 
 function showBig(html, cls, ms = 1500) { // 文字は液晶の中に出す
   const m = html.split(/<small>|<\/small>/), main = m[0].replace(/<[^>]+>/g, ''), sub = (m[1] || '').replace(/<[^>]+>/g, '');
   caption(main, { style: { gold: 'gold', red: 'red', rainbow: 'rainbow', blue: 'blue', white: 'silver' }[cls] || 'gold', size: 128, y: 380, dur: ms / 1000, sub });
-  return sleep(ms + 150);
+  return sleep(ms);
 }
 let pushResolve = null;
 function waitPush(style = '', ms = 6000) { // 筐体のボタンがせり上がって震える
@@ -2236,7 +2238,10 @@ async function runSpin(e) {
   const rush = state.mode === 'rush';
   if (rush) state.stLeft = Math.max(0, state.stLeft - 1);
   const sym = decideSymbols(e);
-  const fast = rush ? 0.5 : state.holds.length >= 3 ? 0.55 : 1;
+  const fast = rush ? 0.4 : 1;
+  // 保留数は消化開始時の残り個数。短縮はリーチなしハズレに限定。
+  const plain = !e.hit && !e.reach;
+  const lead = plain ? (rush ? 850 : state.holds.length >= 3 ? 1500 : 3300) : rush ? 400 : 2600;
   idleLook(); L.hit = false; L.signal = false; L.grey = 0; CUES.spin(); reelsStart();
   if (e.signal) setTimeout(() => { // 先告知：専用音・虹枠・星
     L.signal = true; Snd.sfx.signal(); edgeFlash('#ffffff', 700); vibrate(80);
@@ -2246,43 +2251,45 @@ async function runSpin(e) {
     edgeFlash(LEVEL_COL[e.level], 1000); shakeCam(e.level === 4 ? 1.6 : 0.9, 1.2); cssShake(e.level === 4); vibrate([200, 80, 200]);
     caption(e.level === 4 ? '激アツ!!' : 'チャンス!!', { color: e.level === 4 ? '#ffd23a' : '#ff2a3a', size: 120, y: 384, dur: 1.2 }); Snd.sfx.kyuin();
   }
-  await sleep((e.level >= 3 ? 1300 : 900) * fast);
+  await sleep(Math.max(0, lead - (e.group ? (rush ? 300 : 1000) : 0)));
   if (e.hit && (e.pattern === 'B' || e.pattern === 'F')) return instantHit(e, sym, e.pattern === 'F');
   if (e.group) await groupNotice(e);
-  stopReel(0, sym[0]); await sleep(520 * fast);
-  stopReel(2, sym[2]); await sleep(420 * fast);
+  stopReel(0, sym[0]); await sleep(320 * fast);
+  stopReel(2, sym[2]); await sleep(280 * fast);
 
   if (!e.reach) {
-    stopReel(1, sym[1]); await sleep(rush ? 450 : 650);
+    stopReel(1, sym[1]); await sleep(rush ? 550 : 500);
     return endSpin(e);
   }
   // ---- リーチ ----
   CUES.reach(); say('リーチ'); L.bg = 'reach'; setLamp('red'); Snd.bgm('reach'); reels[1].speed = 8; shakeCam(0.25, 0.3);
   caption('リーチ!!', { color: '#ff3b5b', size: 130, y: 384, dur: 1.1 });
-  await sleep(1200);
+  await sleep(rush ? 200 : 700);
   if (!e.sp) {
-    reels[1].speed = 4; await sleep(rush ? 1400 : 2600);
-    if (e.hit) { stopReel(1, sym[1], 2.2); await sleep(900); return bigHit(e, sym, 'freeze'); }
-    stopReel(1, sym[1], 2.2); await sleep(1300); Snd.sfx.miss(); return endSpin(e);
+    reels[1].speed = 12; await sleep(rush ? 250 : 3800);
+    if (e.hit) { stopReel(1, sym[1], 2.2); await sleep(rush ? 250 : 500); return bigHit(e, sym, 'freeze'); }
+    stopReel(1, sym[1], 2.2); await sleep(rush ? 250 : 500); Snd.sfx.miss(); return endSpin(e);
   }
   return e.big ? bigReach(e, sym) : spReach(e, sym);
 }
 
 async function groupNotice(e) {
-  caption('THUNDER STORM!!', { color: e.level >= 4 ? '#ffd23a' : e.level >= 3 ? '#ff2a3a' : '#7fe0ff', size: 104, y: 384, dur: 2.4 });
+  caption('THUNDER STORM!!', { color: e.level >= 4 ? '#ffd23a' : e.level >= 3 ? '#ff2a3a' : '#7fe0ff', size: 104, y: 384, dur: e.mode === 'rush' ? .3 : 1 });
   startStorm(e.level); Snd.sfx.group(); shakeCam(0.6, 2.4); vibrate([60, 40, 60, 40, 60, 40, 60]);
-  await sleep(2600);
+  await sleep(e.mode === 'rush' ? 300 : 1000); L.storm = null;
 }
 
 // ---- 巨大図柄・共通セリフ帯（すべて液晶内） ----
 function serif(text, { style = 'normal', face = true, dur = 2 } = {}) {
-  L.serif = { text, style, face, until: rt() + dur };
+  L.serif = { text, style, face, at: rt(), until: rt() + dur };
   Snd.sfx.cutin(); say(text, .95);
 }
 function drawSerif(c, t) {
   const q = L.serif; if (!q) return;
   if (rt() >= q.until) { L.serif = null; return; }
   c.save(); c.beginPath(); c.rect(22, 480, 980, 296); c.clip();
+  const enter = clamp((rt() - q.at) / .18, 0, 1);
+  c.translate((1 - enter) * 150, 0); c.globalAlpha = Math.min(enter, clamp((q.until - rt()) / .18, 0, 1));
   const g = c.createLinearGradient(0, 490, 0, 770);
   g.addColorStop(0, q.style === 'gold' ? '#ffc82f' : q.style === 'red' ? '#be1333' : '#17ad60'); g.addColorStop(1, '#67edff');
   c.fillStyle = g; c.fillRect(28, 490, 968, 278);
@@ -2371,7 +2378,7 @@ function drawBigReach(c, t) {
     for (let i = 0; i < 3; i++) c.drawImage(sp, 182 + i * 330 - w / 2, cy - h / 2, w, h);
   } else {
     // 送りも中央固定。最大高さ600px（液晶の75%）、下端640pxで保留行を避ける。
-    const scale = b.phase === 'feed' ? 1 - .12 * Math.max(0, 1 - age / .8) ** 3 : 1;
+    const scale = b.phase === 'feed' ? 1 - .12 * Math.max(0, 1 - age / .2) ** 3 : 1;
     const sp = bigSymSprite(b.n), h = 600 * scale, w = h * sp.width / sp.height;
     c.drawImage(sp, cx - w / 2, cy - h / 2, w, h);
     c.drawImage(symSprite(b.target), 18, 10, 110, 116); c.drawImage(symSprite(b.target), 128, 10, 110, 116);
@@ -2397,42 +2404,44 @@ function drawBigReach(c, t) {
   c.restore();
 }
 async function bigReach(e, sym) {
+  const pause = ms => sleep(e.mode === 'rush' ? ms * (e.hit ? .35 : .1) : ms);
   cueState.scene = 'sp'; L.battle = null; L.captions = []; Snd.bgm(null); setLamp('gold');
   reels[1].state = 'hold';
   const prev = n => (n + 7) % 9 + 1;
   const b = L.big = { target: sym[0], n: prev(prev(sym[0])), stepAt: rt(), phase: 'feed', power: 0 };
   serif('まだだ!!!', { style: 'gold', dur: 2.1 });
-  Snd.fx.bigStep(); await sleep(2200); L.serif = null;
+  Snd.fx.bigStep(); await pause(1000); L.serif = null;
   for (const [i, n] of [prev(prev(sym[0])), prev(sym[0])].entries()) {
     b.n = n; b.phase = 'feed'; b.stepAt = rt(); b.power = i ? 1 : .35;
-    Snd.fx.bigStep(); Snd.fx.riser(i ? 3 : 2.4); await sleep(i ? 3300 : 2700);
+    Snd.fx.bigStep(); Snd.fx.riser((i ? 2 : 1.7) * (e.mode === 'rush' ? .35 : 1)); await pause(i ? 2000 : 1700);
   }
-  b.phase = 'drop'; CUES.dark(650); try { speechSynthesis.cancel(); } catch (_) {} await sleep(700);
-  Snd.fx.subDrop(1.2); serif('どうしてだよぉぉぉ!!', { style: 'red', dur: 2.5 }); await sleep(2700); L.serif = null;
-  if (!e.hit) { stopReel(1, b.n, 1); L.big = null; return endSpin(e); }
-  b.phase = 'revive'; setLamp('rainbow'); Snd.fx.bigRevive(); Snd.fx.riser(1.6); await sleep(1600);
-  b.n = sym[0]; b.phase = 'feed'; b.stepAt = rt(); Snd.fx.bigStep(); await sleep(900);
-  b.phase = 'aligned'; await sleep(1300); L.big = null;
+  b.phase = 'drop'; CUES.dark(e.mode === 'rush' ? 120 : 350); try { speechSynthesis.cancel(); } catch (_) {} await pause(350);
+  Snd.fx.subDrop(1.2); serif('どうしてだよぉぉぉ!!', { style: 'red', dur: 2.5 }); await pause(1400); L.serif = null;
+  if (!e.hit) { stopReel(1, b.n, 1); await sleep(200); L.big = null; return endSpin(e); }
+  b.phase = 'revive'; setLamp('rainbow'); Snd.fx.bigRevive(); Snd.fx.riser(1.6); await pause(600);
+  b.n = sym[0]; b.phase = 'feed'; b.stepAt = rt(); Snd.fx.bigStep(); await pause(600);
+  b.phase = 'aligned'; await pause(700); L.big = null;
   return bigHit(e, sym, 'freeze');
 }
 
 async function spReach(e, sym) {
+  const pause = ms => sleep(e.mode === 'rush' ? ms * (e.hit ? .35 : .1) : ms);
   const hot = e.hit ? Math.max(e.level, Math.random() < 0.5 ? 3 : 2) : e.level;
   cueState.scene = 'sp'; L.spHot = hot; setLamp(hot >= 4 ? 'gold' : hot >= 3 ? 'red' : 'sp'); reels[1].speed = 3;
   battle('intro').hot = hot;
   caption('雷牙バトルリーチ', { style: hot >= 3 ? 'gold' : 'blue', size: 80, y: 150, dur: 2.2, sub: '撃破で大当り!!' });
   say('バトルリーチ！', 1.1); Snd.bgm('sp'); Snd.sfx.sp();
-  await sleep(1500);
-  battle('clash'); await sleep(2000);
-  if (e.cutin) { Snd.sfx.cutin(); L.flashT = rt(); vibrate([150, 50, 300]); L.battle.shake = 30; caption(hot >= 4 ? '激アツ!!' : 'チャンス!!', { style: hot >= 3 ? 'gold' : 'red', size: 130, y: 380, dur: 1.1 }); await sleep(1200); }
+  await pause(1000);
+  battle('clash'); await pause(1400);
+  if (e.cutin) { Snd.sfx.cutin(); L.flashT = rt(); vibrate([150, 50, 300]); L.battle.shake = 30; caption(hot >= 4 ? '激アツ!!' : 'チャンス!!', { style: hot >= 3 ? 'gold' : 'red', size: 130, y: 380, dur: 1.1 }); await pause(600); }
   battle('charge'); CUES.charge(); caption('ブチかませ!!', { style: 'silver', size: 96, y: 150, dur: 1.2 });
-  await sleep(900);
-  await waitPush(e.hit && Math.random() < 0.2 ? 'rainbow' : hot >= 4 ? (Math.random() < 0.5 ? 'drop' : 'gold') : '', 6000);
+  await pause(600);
+  await waitPush(e.hit && Math.random() < 0.2 ? 'rainbow' : hot >= 4 ? (Math.random() < 0.5 ? 'drop' : 'gold') : '', e.mode === 'rush' ? (e.hit ? 900 : 250) : 2500);
   if (e.hit && e.pattern === 'D') return revival(e, sym);
   if (e.hit) return bigHit(e, sym, 'puchun');
   // ハズレ：雷牙がやられる
-  battle('lose'); await sleep(1100); stopReel(1, sym[1], 1.0); Snd.sfx.miss(); L.grey = 0.8;
-  caption('敗北…', { style: 'silver', size: 120, y: 384, dur: 1.6 }); await sleep(1600); L.battle = null; return endSpin(e);
+  battle('lose'); await pause(450); stopReel(1, sym[1], 1.0); Snd.sfx.miss(); L.grey = 0.8;
+  caption('敗北…', { style: 'silver', size: 120, y: 384, dur: 1.6 }); await sleep(e.mode === 'rush' ? 200 : 600); L.battle = null; return endSpin(e);
 }
 
 async function puchun() {
@@ -2459,28 +2468,28 @@ async function impactSlam(sym, gold = false) {
 async function instantHit(e, sym, hyper) {
   if (hyper) { // ハイパー：赤い高速変動から一撃、祝福も短く
     L.bg = 'hyper'; setLamp('red'); Snd.sfx.hyperSpin(); reels.forEach(r => r.speed = 42); vibrate([40, 40, 40, 40, 40]);
-    await sleep(1000); return bigHit(e, sym, 'freeze', { fast: true });
+    await sleep(e.mode === 'rush' ? 200 : 650); return bigHit(e, sym, 'freeze', { fast: true });
   }
   // 突当り：普通の変動のまま、前触れなく直接揃う
-  await sleep(1200); return bigHit(e, sym, 'freeze');
+  await sleep(e.mode === 'rush' ? 250 : 700); return bigHit(e, sym, 'freeze');
 }
 async function revival(e, sym) {
   // 復活：雷牙が倒れる → 沈黙 → ヒビ → 赤いオーラで立ち上がり逆転
-  battle('lose'); await sleep(1000);
+  battle('lose'); await sleep(450);
   stopReel(1, (sym[1] % 9) + 1, 1.0); Snd.sfx.miss(); caption('敗北…', { style: 'silver', size: 110, y: 384, dur: 1.3 });
   L.grey = 1; setLamp('off'); Snd.bgm(null);
-  await sleep(1800);
+  await sleep(700);
   Snd.sfx.crack(); crackAt(260, 600); vibrate([60, 30, 120]); spawnBolt('#ff2a20', 4, 3.5); edgeFlash('#ff2030', 600);
   await sleep(300); L.grey = 0; battle('rise'); setLamp('red'); reels[1].state = 'spin'; reels[1].speed = 30;
   caption('逆転', { style: 'red', size: 160, y: 170, dur: 1.3 }); say('まだだ！', 1.0);
-  await sleep(1400);
-  battle('win'); await sleep(950);
+  await sleep(700);
+  battle('win'); await sleep(400);
   return bigHit(e, sym, 'freeze');
 }
 
 async function bigHit(e, sym, pre = 'freeze', opt = {}) {
-  if (pre === 'puchun') { await puchun(); if (L.battle) { battle('win'); await sleep(950); } await freezeMoment(220); }
-  else await freezeMoment(opt.fast ? 200 : e.pattern === 'B' ? 560 : 420);
+  if (pre === 'puchun') { await puchun(); if (L.battle) { battle('win'); await sleep(e.mode === 'rush' ? 180 : 400); } await freezeMoment(170); }
+  else await freezeMoment(e.mode === 'rush' || opt.fast ? 150 : e.pattern === 'B' ? 300 : 250);
   await impactSlam(sym);
   // 確定：図柄をしっかり見せてから祝福
   L.hit = true; L.bg = 'jackpot'; L.signal = false; L.grey = 0;
@@ -2497,12 +2506,12 @@ async function bigHit(e, sym, pre = 'freeze', opt = {}) {
   // RUSH UP：シャッターが閉じ、ボタンで昇格を告知
   let toRush = e.rush;
   if (!(e.rush && e.oddShow)) {
-    Snd.bgm(null); setLamp('off'); L.dim = 0.7; await sleep(1300); L.dim = 0; // 祝福のあとの静かな間
-    L.bg = 'rush'; setLamp('red'); L.shT = 1; Snd.sfx.shutter(); await sleep(650);
-    caption('RUSH UP CHANCE', { style: 'gold', size: 84, y: 230, dur: 2.0 }); await sleep(1500);
-    await waitPush(toRush && Math.random() < 0.3 ? 'gold' : '', 5000);
+    Snd.bgm(null); setLamp('off'); L.dim = 0.7; await sleep(250); L.dim = 0; // 昇格告知へ短くつなぐ
+    L.bg = 'rush'; setLamp('red'); L.shT = 1; Snd.sfx.shutter(); await sleep(220);
+    caption('RUSH UP CHANCE', { style: 'gold', size: 84, y: 230, dur: 2.0 }); await sleep(500);
+    await waitPush(toRush && Math.random() < 0.3 ? 'gold' : '', 2500);
     if (toRush) { await freezeMoment(380); await impactSlam(null, true); L.shT = 0; Snd.sfx.shutter(); }
-    else { await sleep(600); Snd.sfx.shutter(); L.shT = 0; Snd.sfx.miss(); caption('通常大当り終了', { style: 'silver', size: 90, y: 384, dur: 2.2 }); await sleep(2200); }
+    else { await sleep(200); Snd.sfx.shutter(); L.shT = 0; Snd.sfx.miss(); caption('通常大当り終了', { style: 'silver', size: 90, y: 384, dur: 2.2 }); await sleep(2200); }
   }
   if (toRush) {
     CUES.rush(); shakeCam(1.2, 1); vibrate([200, 60, 400]); spawnBolt('#ffc830', 5, 3); camZoom.target = 0.4;
@@ -2529,11 +2538,11 @@ async function runRounds() {
     if (n === SPEC.rounds) Snd.sfx.open();
     const t0 = performance.now();
     while (att.count < SPEC.roundCount && performance.now() - t0 < SPEC.roundTime * 1000) await sleep(50);
-    att.open = false; finishRound(att.count >= SPEC.roundCount); await sleep(700);
+    att.open = false; finishRound(att.count >= SPEC.roundCount); await sleep(350);
     displayGain = L.round.displayGain;
   }
   L.round = null; state.jackpot = false;
-  caption(`獲得 ${stats.gain} 発`, { color: '#ffe14a', size: 100, y: 384, dur: 2 }); await sleep(1800);
+  caption(`獲得 ${stats.gain} 発`, { color: '#ffe14a', size: 100, y: 384, dur: 2 }); await sleep(1000);
 }
 
 async function endSpin(e) {
