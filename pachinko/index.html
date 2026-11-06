@@ -371,7 +371,7 @@ const Snd = (() => {
   function beatClock() {
     const seconds = ctx ? ctx.currentTime : performance.now() / 1000;
     const beat = (seconds - beatEpoch) * beatTempo / 60;
-    return { beat, phase: beat - Math.floor(beat), tempo: beatTempo };
+    return { beat, phase: beat - Math.floor(beat), tempo: beatTempo, seconds };
   }
   function tone(f, d = 0.15, type = 'square', v = 0.15, t0 = 0, slide = null, dest) {
     if (!ok()) return; const t = ctx.currentTime + t0;
@@ -826,12 +826,12 @@ const lampSprites = lampPos.map(([px, py, s]) => {
 const lightMobile = matchMedia('(pointer: coarse)').matches || innerWidth < 700;
 const lightUniforms = {
   mask: { value: null }, time: { value: 0 }, speed: { value: 1 }, intensity: { value: .3 },
-  pattern: { value: 5 }, strobe: { value: 0 }, audio: { value: 0 },
+  cueSide: { value: -1 }, pattern: { value: 5 }, strobe: { value: 0 }, audio: { value: 0 },
   c0: { value: new THREE.Color('#ff7020') }, c1: { value: new THREE.Color('#ffc060') }, c2: { value: new THREE.Color('#ff2040') }
 };
 const lightVertex = `varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
 const lightFragment = `
-  uniform sampler2D mask; uniform float time,speed,intensity,pattern,strobe,audio;
+  uniform sampler2D mask; uniform float time,speed,intensity,pattern,strobe,audio,cueSide;
   uniform vec3 c0,c1,c2; varying vec2 vUv;
   void main(){
     vec2 p=vec2(vUv.x,1.-vUv.y); float m=texture2D(mask,vUv).r;
@@ -844,6 +844,10 @@ const lightFragment = `
     if(pattern>2.5 && pattern<3.5) wave=pow(.5+.5*cos(atan(p.y-.45,p.x-.5)*3.-t*6.),3.);
     if(pattern>3.5 && pattern<4.5) wave=.5+.5*cos(t*6.28318);
     if(pattern>4.5) wave=.5+.5*sin(t*2.);
+    if(cueSide>=0.) {
+      float target=cueSide<.5?.24:cueSide>1.5?.76:.5;
+      wave*=exp(-pow((p.x-target)*5.,2.));
+    }
     float grad=.5+.5*sin((p.y+side*.35)*7.-t*1.4);
     vec3 col=grad<.5?mix(c0,c1,grad*2.):mix(c1,c2,(grad-.5)*2.);
     float flash=mix(1.,mix(.18,1.,step(.58,.5+.5*sin(t*6.28318))),strobe);
@@ -1006,7 +1010,7 @@ function updateBTN(dt, t) {
   BTN.g.position.x = BTN.x + jit; BTN.g.position.z = 0.04 + up; BTN.g.scale.setScalar((1 + up * 0.09) * (BTN.z < 0 ? 0.94 : 1));
   BTN.skirt.scale.z = Math.max(0.01, up); BTN.skirt.position.z = -up / 2;
   BTN.mat.opacity = BTN.ringMat.opacity = BTN.skirtMat.opacity = BTN.vis;
-  const pul = BTN.active ? 0.5 + 0.5 * Math.sin(t * 14) : 0;
+  const pul = BTN.active ? 0.5 + 0.5 * Math.sin(t * 5) : 0;
   if (BTN.style === 'gold') BTN.mat.emissive.setRGB(1, 0.7, 0.15); else if (BTN.style === 'rainbow') BTN.mat.emissive.setHSL((t * 0.8) % 1, 1, 0.5); else BTN.mat.emissive.setRGB(1, 0.06, 0.1);
   BTN.mat.emissiveIntensity = 0.5 + pul * 1.6;
 }
@@ -1205,12 +1209,12 @@ function stopReel(i, sym, durMul = 1) {
   r.state = 'stopping'; r.from = r.pos; r.to = P; r.t = 0; r.dur = Math.max(0.3, (P - r.pos) / 22 * 1.6) * durMul;
 }
 function updateReels(dt) {
-  reels.forEach(r => {
+  reels.forEach((r, i) => {
     if (r.state === 'spin') r.pos += r.speed * dt;
     else if (r.state === 'stopping') {
       r.t += dt; const x = clamp(r.t / r.dur, 0, 1); const c1 = 1.7, c3 = c1 + 1;
       const e = 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
-      r.pos = r.from + (r.to - r.from) * e; if (x >= 1) { r.pos = r.to; r.state = 'stop'; }
+      r.pos = r.from + (r.to - r.from) * e; if (x >= 1) { r.pos = r.to; r.state = 'stop'; if (lampMode.mode !== 'off') CUES.stop(i); }
     }
   });
 }
@@ -1469,7 +1473,7 @@ function drawCrack(c) {
   c.restore();
 }
 function drawPushPrompt(c, t) {
-  const p = L.push, rem = clamp(1 - (performance.now() / 1000 - p.t0) / p.dur, 0, 1), pul = 0.5 + 0.5 * Math.sin(t * 14);
+  const p = L.push, rem = clamp(1 - (performance.now() / 1000 - p.t0) / p.dur, 0, 1), pul = 0.5 + 0.5 * Math.sin(t * 5);
   const bx = LW / 2, by = 604, r = 64 * (1 + pul * 0.05);
   const col = p.style === 'gold' ? 'rgba(255,190,40,.7)' : p.style === 'rainbow' ? `hsla(${(t * 300) % 360},100%,60%,.7)` : 'rgba(255,30,40,.7)';
   flare(c, bx, by, r * 2.4, col, 0.5 + 0.5 * pul);
@@ -1597,6 +1601,7 @@ function stormBG(c, t, hot) {
 }
 const ease = x => x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x);
 function battle(phase) {
+  if (phase === 'lose' && lampMode.mode === 'off') { cueState.scene = 'sp'; setLamp('sp'); }
   const prev = L.battle; L.battle = { phase, t0: rt(), hot: prev ? prev.hot : 0, fired: {}, shake: 0, cam: prev ? prev.cam : 1 };
   return L.battle;
 }
@@ -1613,14 +1618,14 @@ function drawBattle(c, t) {
     hx = lerp(-260, 280, ease(a / 0.7)); bx = lerp(1350, 790, ease((a - 0.15) / 0.7));
     c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = ease((a - 0.5) / 0.3);
     c.fillStyle = 'rgba(255,255,255,.08)'; c.beginPath(); c.moveTo(560, 0); c.lineTo(620, 0); c.lineTo(460, LH); c.lineTo(400, LH); c.fill(); c.restore();
-    once(B, 'vs', () => setTimeout(() => { spawnBolt('#ffffff', 2, 3); Snd.sfx.clash(); }, 550));
+    once(B, 'vs', () => setTimeout(() => { spawnBolt('#ffffff', 2, 3); CUES.attack(); }, 550));
   } else if (B.phase === 'clash') {
     const k1 = ease(a / 0.3), k2 = ease((a - 1.0) / 0.25);
     hx = a < 0.6 ? lerp(280, 440, k1) : a < 1.0 ? lerp(440, 300, ease((a - 0.6) / 0.3)) : lerp(300, 450, k2);
     bx = a < 0.6 ? lerp(790, 640, k1) : a < 1.0 ? lerp(640, 780, ease((a - 0.6) / 0.3)) : lerp(780, 650, k2);
     hp.arm = a < 0.3 ? lerp(0.4, -1.1, k1) : 0.6; bp.claw = a < 0.3 ? 0.6 : -0.2; bp.mouth = 0.5;
-    once(B, 'h1', () => setTimeout(() => { B.shake = 26; Snd.sfx.clash(); spawnBolt('#ffffff', 2, 3); }, 300));
-    once(B, 'h2', () => setTimeout(() => { B.shake = 30; Snd.sfx.clash(); spawnBolt(glow, 3, 3); vibrate(40); }, 1250));
+    once(B, 'h1', () => setTimeout(() => { B.shake = 26; CUES.attack(); spawnBolt('#ffffff', 2, 3); }, 300));
+    once(B, 'h2', () => setTimeout(() => { B.shake = 30; CUES.attack(); spawnBolt(glow, 3, 3); vibrate(40); }, 1250));
     if ((a > 0.28 && a < 0.4) || (a > 1.22 && a < 1.34)) flare(c, 545, 420, 420, 'rgba(255,255,255,.95)', 1);
   } else if (B.phase === 'charge') {
     const z = 1 + Math.min(0.12, a * 0.02); c.translate(LW / 2, LH / 2); c.scale(z, z); c.translate(-LW / 2, -LH / 2);
@@ -1634,13 +1639,13 @@ function drawBattle(c, t) {
       c.strokeStyle = glow; c.lineWidth = 60; c.beginPath(); c.arc(640, 420, 330, -2.2, 0.9); c.stroke();
       c.strokeStyle = '#ffffff'; c.lineWidth = 16; c.beginPath(); c.arc(640, 420, 330, -2.2, 0.9); c.stroke(); c.restore();
     }
-    once(B, 'slash', () => { Snd.sfx.slash(); setTimeout(() => { B.shake = 40; crackAt(800, 400); spawnBolt(glow, 5, 4); }, 180); });
+    once(B, 'slash', () => { Snd.sfx.slash(); setTimeout(() => { B.shake = 40; CUES.attack(); crackAt(800, 400); spawnBolt(glow, 5, 4); }, 180); });
   } else if (B.phase === 'lose') {
     const k = ease((a - 0.25) / 0.5);
     bp.mouth = 1; bp.charge = a < 0.3 ? 1 : 0;
     hx = lerp(280, 140, k); hp.lean = lerp(0, -1.25, k); hy = lerp(700, 730, k); hp.arm = 0.9; hp.alpha = lerp(1, 0.7, k);
     if (a > 0.15 && a < 0.6) { c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = 1 - (a - 0.15) / 0.45; const bg2 = c.createLinearGradient(0, 0, 0, 1); c.strokeStyle = '#d040ff'; c.lineWidth = 90; c.lineCap = 'round'; c.beginPath(); c.moveTo(640, 700); c.lineTo(250, 560); c.stroke(); c.strokeStyle = '#ffffff'; c.lineWidth = 26; c.stroke(); c.restore(); }
-    once(B, 'hit', () => setTimeout(() => { B.shake = 34; Snd.sfx.clash(); vibrate(80); }, 200));
+    once(B, 'hit', () => setTimeout(() => { B.shake = 34; CUES.attack(); vibrate(80); }, 200));
   } else if (B.phase === 'rise') {
     const k = ease(a / 0.9);
     hx = lerp(140, 280, k); hp.lean = lerp(-1.25, 0, k); hy = lerp(730, 700, k); hp.aura = 'rgba(255,40,30,.75)'; hp.glow = '#ff4030'; hp.charge = a > 0.6 ? 1 : 0; hp.arm = lerp(0.9, -1.35, ease((a - 0.6) / 0.4));
@@ -1677,7 +1682,7 @@ function drawStorm(c, t) {
 /* ---- 図柄・リール ---- */
 // 祝福の音・液晶・ランプで共用する時間軸。短縮版も同じ拍を使う。
 let celebration = null;
-const celebrationAge = () => celebration ? (rt() - celebration.t0) / celebration.speed : 0;
+const celebrationAge = () => celebration ? (Snd.beatClock().seconds - cueState.at) / celebration.speed : 0;
 function drawCelebration(c, t) {
   const a = celebrationAge();
   c.save(); c.beginPath(); c.rect(0, 0, LW, LH); c.clip();
@@ -1690,8 +1695,8 @@ function drawCelebration(c, t) {
     c.fillStyle = metalGrad(c, -9, 9, MET.gold.stops); c.strokeStyle = '#fff2ae'; c.lineWidth = 2;
     c.beginPath(); c.ellipse(0, 0, 6, 9, 0, 0, Math.PI * 2); c.fill(); c.stroke(); c.restore();
   }
-  if (a >= .95) {
-    const p = clamp((a - .95) / .32, 0, 1), y = 585 + 85 * Math.pow(1 - p, 3);
+  if (a >= .85) {
+    const p = clamp((a - .85) / .32, 0, 1), y = 585 + 85 * Math.pow(1 - p, 3);
     c.save(); c.globalAlpha = p; c.strokeStyle = '#ffe48a'; c.shadowColor = '#ffb600'; c.shadowBlur = 18; c.lineWidth = 6;
     for (const side of [-1, 1]) {
       c.beginPath(); c.moveTo(512 + side * 200, y);
@@ -1741,7 +1746,7 @@ function drawReels(c, t, mini = false) {
         const y = cy + (r.pos - k) * cell; if (y < -200 || y > LH + 200) continue;
         const centerish = Math.abs(r.pos - k) < 0.5;
         let glow = 0; if (centerish && r.state === 'stop') { if (L.hit) glow = 2; else if (reach && i !== 1) glow = 0.8 + 0.4 * Math.sin(t * 12); }
-        const age = celebrationAge(), beat = age - i * .15;
+        const age = celebrationAge(), beat = age - i * .18;
         const bounce = celebration && beat >= 0 && beat < .45 ? Math.sin(beat / .45 * Math.PI) * Math.exp(-beat * 3) : 0;
         const s = centerish && r.state === 'stop' ? sc * (1 + bounce * .18) : sc * .86;
         if (centerish && celebration) {
@@ -1858,7 +1863,7 @@ function drawRound(c, t) {
 }
 function roundEntry() {
   const r = L.round; if (!r || r.endAt !== null) return;
-  r.hitAt = rt(); r.entries.push({ at: r.hitAt, count: att.count });
+  CUES.entry(); r.hitAt = rt(); r.entries.push({ at: r.hitAt, count: att.count });
   if (att.count >= SPEC.roundCount) finishRound(true);
 }
 function finishRound(complete) {
@@ -1893,6 +1898,23 @@ function drawLCD(t) {
   L.sh = lerp(L.sh, L.shT, 0.2); if (L.sh > 0.01) drawShutter(c, L.sh, t);
   if (celebration) drawCelebration(c, t);
   drawCaptions(c, t);
+  // 音と同じ時計で液晶の縁を発光。中央の図柄・文字は隠さない。
+  const accent = cueState.accent;
+  if (accent && lampMode.mode !== 'off' && !L.black) {
+    const age = Snd.beatClock().seconds - accent.at;
+    if (age < accent.duration) {
+      c.save(); c.globalAlpha = .65 * Math.max(0, 1 - age / accent.duration);
+      c.strokeStyle = accent.color; c.shadowColor = accent.color; c.shadowBlur = 30; c.lineWidth = 18;
+      if (accent.direction < 0) c.strokeRect(9, 9, LW - 18, LH - 18);
+      else { const x = accent.direction === 0 ? 12 : accent.direction === 2 ? LW - 12 : LW / 2; c.beginPath(); c.moveTo(x, 12); c.lineTo(x, LH - 12); c.stroke(); }
+      c.restore();
+    }
+  }
+  if (celebration) {
+    const age = celebrationAge(), marks = [0,.18,.36,.85,1.3,1.8];
+    const since = age - marks.filter(x => x <= age).pop();
+    c.save(); c.globalAlpha = .8 * Math.exp(-since * 16); c.strokeStyle = age < .85 ? '#ffffff' : '#ffd040'; c.lineWidth = 20; c.strokeRect(10, 10, LW - 20, LH - 20); c.restore();
+  }
   drawHolds(c, t);
   if (L.signal) drawSignal(c, t);
   if (state.started && needRight()) { // 右打ちタグ
@@ -1963,7 +1985,7 @@ function onEntry(type, b) {
   if (type === 'heso' || type === 'denchu') {
     addBalls(type === 'heso' ? SPEC.hesoPay : SPEC.denchuPay);
     const p = type === 'heso' ? HESO : { x: den.x, y: den.y };
-    hesoFlash = 1; Snd.sfx.heso();
+    hesoFlash = 1; CUES.hold(0); Snd.sfx.heso();
     if (state.holds.length < SPEC.holdMax) {
       const e = lottery(state.mode); state.holds.push(e); Snd.sfx.hold(state.holds.length); onHoldEffect(e, p);
     } else burst(p.x, p.y, 0.6, 0xffffff, 10, 3, 0.4);
@@ -1980,17 +2002,17 @@ function onEntry(type, b) {
 let hesoFlash = 0, pushPress = 0;
 const sinks = []; // 入賞口に吸い込まれる玉
 function onHoldEffect(e, p) {
-  const lvl = e.level;
+  const lvl = e.level; CUES.hold(lvl);
   if (lvl === 0) { burst(p.x, p.y, 0.6, 0xffffff, 18, 3, 0.5); return; }
   const col = LEVEL_COL[lvl];
-  if (lvl === 1) { Snd.sfx.holdBlue(); burst(p.x, p.y, 0.6, col, 40, 4, 0.8); }
-  if (lvl === 2) { Snd.sfx.holdGreen(); burst(p.x, p.y, 0.6, col, 60, 5, 0.9); caption('チャンス保留!', { color: '#3dff7a', size: 70, y: 620, dur: 1.2 }); }
+  if (lvl === 1) { burst(p.x, p.y, 0.6, col, 40, 4, 0.8); }
+  if (lvl === 2) { burst(p.x, p.y, 0.6, col, 60, 5, 0.9); caption('チャンス保留!', { color: '#3dff7a', size: 70, y: 620, dur: 1.2 }); }
   if (lvl === 3) {
-    Snd.sfx.holdRed(); burst(p.x, p.y, 0.6, col, 220, 9, 1.4); edgeFlash('#ff0030', 900); shakeCam(0.7, 1.0); cssShake(false); vibrate([120, 60, 120, 60, 200]);
+    burst(p.x, p.y, 0.6, col, 220, 9, 1.4); edgeFlash('#ff0030', 900); shakeCam(0.7, 1.0); cssShake(false); vibrate([120, 60, 120, 60, 200]);
     caption('赤保留!!', { color: '#ff2a3a', size: 110, y: 600, dur: 1.6 }); say('激アツ');
   }
   if (lvl === 4) {
-    Snd.sfx.holdGold(); burst(p.x, p.y, 0.6, col, 400, 12, 1.8); burst(p.x, p.y, 0.6, 'rainbow', 200, 8, 1.6); edgeFlash('#ffcc00', 1400); shakeCam(1.4, 1.6); cssShake(true); vibrate([300, 80, 300, 80, 500]);
+    burst(p.x, p.y, 0.6, col, 400, 12, 1.8); burst(p.x, p.y, 0.6, 'rainbow', 200, 8, 1.6); edgeFlash('#ffcc00', 1400); shakeCam(1.4, 1.6); cssShake(true); vibrate([300, 80, 300, 80, 500]);
     showBig('金保留!!<small>激アツ確定級</small>', 'gold', 1400); say('ゴールド！ 激アツ！');
   }
 }
@@ -2014,12 +2036,12 @@ let pushResolve = null;
 function waitPush(style = '', ms = 6000) { // 筐体のボタンがせり上がって震える
   return new Promise(res => {
     const prevZoom = camZoom.target; camZoom.target = 0; SU.target = Math.min(SU.target, 0.45); // 盤面全体とボタンが見える位置へ引く
-    L.push = { t0: rt(), dur: ms / 1000, style }; btnUp(style); Snd.sfx.pushAppear(); say('押せ！', 1.0);
-    const prevLamp = lampMode.mode; setLamp(style === 'gold' ? 'gold' : style === 'rainbow' ? 'rainbow' : 'red');
+    L.push = { t0: rt(), dur: ms / 1000, style }; btnUp(style); CUES.push(); say('押せ！', 1.0);
+    setLamp(style === 'gold' ? 'gold' : style === 'rainbow' ? 'rainbow' : 'red');
     const vib = setInterval(() => vibrate(30), 600); let done = false;
     const finish = () => {
       if (done) return; done = true; pushResolve = null; clearTimeout(to); clearInterval(vib);
-      L.push = null; btnPress(); pushPress = 1; Snd.sfx.press(); vibrate(60); setLamp(prevLamp); camZoom.target = prevZoom; setTimeout(res, 170);
+      L.push = null; btnPress(); pushPress = 1; Snd.sfx.press(); vibrate(60); CUES.dark(170); camZoom.target = prevZoom; setTimeout(res, 170);
     };
     pushResolve = finish; const to = setTimeout(finish, ms);
   });
@@ -2039,27 +2061,71 @@ const lightModes={
   off:{palette:['#000000'],intensity:0},
   celebration:{palette:['#ffffff','#ffe060','#ffb020'],pattern:'wave',speed:2.8,intensity:1.65,strobe:.35}
 };
+// 場面の音・枠・液晶を同じ呼び出しで始める。短い入賞光より暗転を優先する。
+const cueState = { scene: 'idle', at: 0, accent: null };
+function cueAccent(color, duration = .3, direction = -1, pattern = 'flash') {
+  if (lampMode.mode === 'off') return;
+  cueState.accent = { color, duration, direction, pattern, at: Snd.beatClock().seconds };
+}
+const CUES = {
+  hold(level) {
+    if (lampMode.mode === 'off') return;
+    const colors = ['#ffffff','#248cff','#28ff70','#ff1028','#ffd040'];
+    if (level) Snd.sfx[['','holdBlue','holdGreen','holdRed','holdGold'][level]]();
+    cueAccent(colors[level], level === 4 ? 1.4 : .25 + level * .12, -1, level === 4 ? 'breathe' : 'wave');
+  },
+  spin() { cueState.scene = state.mode === 'rush' ? 'rush' : 'spin'; Snd.sfx.spinStart(); cueAccent('#b5eaff', .22, -1, 'converge'); },
+  stop(i) { Snd.sfx.reelStop(); cueAccent('#e4f8ff', .28, i); },
+  reach() { cueState.scene = 'reach'; cueState.at = Snd.beatClock().seconds; Snd.sfx.reach(); Snd.fx.riser(1.2); },
+  charge() { Snd.bgm(null); cueState.scene = 'charge'; cueState.at = Snd.beatClock().seconds; lampFlash = null; Snd.fx.riser(.9); },
+  attack() { if (lampMode.mode === 'off') return; whiteFlash(110); cueAccent('#ffffff', .11); Snd.sfx.clash(); },
+  push() { cueState.scene = 'push'; Snd.sfx.pushAppear(); },
+  dark(ms) { cueState.scene = 'dark'; cueState.accent = null; lampFlash = null; setLamp('off'); Snd.bgm(null); Snd.cut(ms); },
+  drop() { Snd.fx.subDrop(.55); },
+  impact() { cueState.scene = 'impact'; whiteFlash(240); cueAccent('#ffffff', .24); Snd.sfx.impact(); Snd.sfx.clash(); spawnBolt('#ffffff', 6, 4); },
+  celebration(speed) { cueState.scene = 'celebration'; cueState.at = Snd.beatClock().seconds; Snd.sfx.fanfare(speed); },
+  round(n) { cueState.scene = 'round'; setLamp(n === SPEC.rounds ? 'celebration' : n % 2 ? 'gold' : 'rainbow'); Snd.fx.stinger(); cueAccent(n === SPEC.rounds ? '#ffffff' : '#ffd040', .45); },
+  entry() { cueAccent('#ffe070', .16, -1, 'wave'); },
+  rush() { cueState.scene = 'rush'; setLamp('rush'); Snd.sfx.rushIn(); cueAccent('#ffd040', .65, -1, 'breathe'); }
+};
+// 毎フレーム再計算し、一時キューの終了時にも必ず基調へ戻す。
+function choreographLights(demo) {
+  const clock = Snd.beatClock(), age = clock.seconds - cueState.at;
+  let cfg = { ...(lightModes[lampMode.mode] || lightModes.idle) };
+  if (lampMode.mode === 'off') { lightUniforms.cueSide.value = -1; setLights(lightModes.off); return null; }
+  if (demo) cfg = { palette:['#6040ff','#30bfff','#ffc060'], pattern:'wave', speed:.22, intensity:.32 };
+  else if (cueState.scene === 'reach') cfg = { palette:['#ff0818','#ff4010'], pattern:'flow', speed:2 + Math.min(4, age * 1.5), intensity:1.3 };
+  else if (cueState.scene === 'charge') cfg = { palette:['#701010','#ffc060'], pattern:'converge', speed:1 + age * 2, intensity:.18 + Math.min(.4, age * .3) };
+  else if (L.push) cfg = { ...lightModes.red, pattern:'breathe', speed:1.2, intensity:.28 };
+  else if (lampMode.mode === 'rush') cfg = { ...lightModes.rush, speed:4.5, intensity:.4 + .95 * (1 - Math.exp(-clock.phase * 6)) };
+  if (celebration) {
+    const a = clock.seconds - cueState.at, marks = [0,.18,.36,.85,1.3,1.8];
+    const k = Math.max(0, marks.filter(x => x * celebration.speed <= a).length - 1);
+    cfg = { ...lightModes.celebration, pattern:['flash','converge','wave','rotate','flow','wave'][k], palette:k < 3 ? ['#ffffff','#ffe080'] : k < 5 ? ['#ffb010','#fff0a0'] : lightModes.rainbow.palette, intensity:1.15 + .65 * Math.exp(-(a - marks[k] * celebration.speed) * 12) };
+  }
+  const accent = cueState.accent;
+  if (accent && clock.seconds - accent.at < accent.duration) cfg = { palette:[accent.color], pattern:accent.pattern, speed:3, intensity:1.8 };
+  else cueState.accent = null;
+  lightUniforms.cueSide.value = cueState.accent ? cueState.accent.direction : -1;
+  setLights(cfg);
+  return cueState.accent;
+}
 function setLamp(m) { lampMode.mode = m; setLights(lightModes[m] || lightModes.idle); }
 function updateLamps(dt, t) {
   const c = new THREE.Color(), m = lampMode.mode;
   const wallTime = performance.now() / 1000;
   if (state.firing || state.spinning || state.jackpot) lampLastActive = wallTime;
   const demo = !state.firing && !state.spinning && !state.jackpot && wallTime - lampLastActive > 18;
+  const accent = choreographLights(demo);
   const { beat, phase } = Snd.beatClock();
   const pulse = Math.exp(-phase * 5);
   lightUniforms.time.value=t;
   lightUniforms.audio.value=Math.min(1.2,Snd.level()*.45+Snd.bass*.95);
-  if(m==='celebration' && celebration) {
-    const age=celebrationAge();
-    const palette=age<.45?['#ffffff']:age<1.65?['#ffb010','#fff0a0','#ffcc20']:['#ff2050','#20ff90','#4050ff'];
-    for(let i=0;i<3;i++) lightUniforms['c'+i].value.set(palette[i%palette.length]);
-  }
   const flashAge=lampFlash ? wallTime-lampFlash.t0 : Infinity;
-  if(lampFlash && flashAge<lampFlash.ms) {
+  if(m !== 'off' && lampFlash && flashAge<lampFlash.ms) {
     for(let i=0;i<3;i++) lightUniforms['c'+i].value.copy(lampFlash.col);
-    lightUniforms.intensity.value=Math.sin(flashAge*40)>0?1.8:.4;
-  } else if(lampSurface.userData.flashing) setLights(lightModes[m] || lightModes.idle);
-  lampSurface.userData.flashing=!!lampFlash && flashAge<lampFlash.ms;
+    lightUniforms.intensity.value=1.8;
+  }
   partLights.forEach((mesh,i)=>{
     mesh.material.uniforms.color.value.copy(lightUniforms[i===0?'c1':'c0'].value);
     const active=i===2?att.open:i===3?den.open:i===1?Math.min(1,Math.abs(windmill.w)*.12):hesoFlash;
@@ -2071,7 +2137,7 @@ function updateLamps(dt, t) {
     const wave = .5 + .5 * Math.sin((height * 2 - beat) * Math.PI * 2);
     const converge = Math.pow(.5 + .5 * Math.cos((side * 2 + beat * 2) * Math.PI * 2), 5);
     if (m === 'celebration' && celebration) {
-      const age = celebrationAge(), beats = [0, .15, .3, .45, .95, 1.3, 1.65];
+      const age = (Snd.beatClock().seconds - cueState.at) / celebration.speed, beats = [0, .18, .36, .85, 1.3, 1.8];
       const since = age - beats.filter(b => b <= age).pop();
       if (age < .45) c.setRGB(1, 1, 1);
       else if (age < 1.65) c.setRGB(1, .72, .12);
@@ -2083,15 +2149,22 @@ function updateLamps(dt, t) {
     else if (m === 'rainbow') { c.setHSL((height + side * .2 + beat * .16) % 1, 1, .55); o = .35 + .55 * wave; }
     else if (m === 'red') { c.set(0xff1020); o = .12 + .82 * converge; }
     else if (m === 'gold') { c.setRGB(1, .7, .12); o = .25 + .5 * converge + .15 * pulse; }
-    else if (m === 'rush') { const chase = wave > .65; c.setRGB(1, chase ? .65 : .035, .02); o = .18 + .7 * wave; }
+    else if (m === 'rush') { const chase = .5 + .5 * Math.sin((height * 3 - beat * 2) * Math.PI * 2); c.setRGB(1, chase > .6 ? .72 : .035, .02); o = (.15 + .85 * chase) * (.3 + .7 * (1 - pulse)); }
     else if (m === 'sp') { c.setHSL((height * .7 + beat * .22 + side * .2) % 1, 1, .55); o = .2 + .7 * converge; }
     else if (demo) { c.setHSL((height * .5 + wallTime * .025) % 1, .85, .55); o = .18 + .17 * Math.sin(height * 5 - wallTime * .7) ** 2; }
     else { c.setRGB(1, .4, .12); o = .12 + .18 * (.5 + .5 * Math.sin(beat * Math.PI / 4)); }
-    if (lampFlash) { const age = performance.now() / 1000 - lampFlash.t0; if (age < lampFlash.ms) { c.copy(lampFlash.col); o = Math.sin(age * 40) > 0 ? 1 : 0.25; } }
+    if (m !== 'off' && lampFlash) { const age = performance.now() / 1000 - lampFlash.t0; if (age < lampFlash.ms) { c.copy(lampFlash.col); o = Math.sin(age * 40) > 0 ? 1 : 0.25; } }
+    if (m !== 'off' && cueState.scene === 'charge') o *= .16;
+    if (m !== 'off' && L.push) o *= .2;
+    if (m !== 'off' && cueState.scene === 'reach') { c.set('#ff1020'); o = .08 + .92 * Math.pow(.5 + .5 * Math.sin(height * 18 - (Snd.beatClock().seconds - cueState.at) * (12 + Math.min(16, (Snd.beatClock().seconds - cueState.at) * 4))), 4); }
+    if (m !== 'off' && accent) {
+      const local = accent.direction < 0 ? 1 : accent.direction === 0 ? x < 430 : accent.direction === 2 ? x > 594 : Math.abs(x - 512) < 230;
+      if (local) { c.set(accent.color); const a = (Snd.beatClock().seconds - accent.at) / accent.duration; o = accent.pattern === 'breathe' ? .4 + .6 * Math.sin(a * Math.PI * 4) ** 2 : .5 + .5 * Math.cos(a * Math.PI); }
+    }
     sp.material.color.copy(c); sp.material.opacity = o * .22;
   }
 }
-function idleLook() { Snd.bgm(state.mode === 'rush' ? 'rush' : 'normal'); L.bg = state.mode === 'rush' ? 'rush' : 'normal'; setLamp(state.mode === 'rush' ? 'rush' : 'idle'); }
+function idleLook() { cueState.scene = 'idle'; Snd.bgm(state.mode === 'rush' ? 'rush' : 'normal'); L.bg = state.mode === 'rush' ? 'rush' : 'normal'; setLamp(state.mode === 'rush' ? 'rush' : 'idle'); }
 
 /* =========================================================
  *  9. 変動シーケンス（async）
@@ -2104,7 +2177,7 @@ async function runSpin(e) {
   if (rush) state.stLeft = Math.max(0, state.stLeft - 1);
   const sym = decideSymbols(e);
   const fast = rush ? 0.5 : state.holds.length >= 3 ? 0.55 : 1;
-  idleLook(); L.hit = false; L.signal = false; L.grey = 0; Snd.sfx.spinStart(); reelsStart();
+  idleLook(); L.hit = false; L.signal = false; L.grey = 0; CUES.spin(); reelsStart();
   if (e.signal) setTimeout(() => { // 先告知：専用音・虹枠・星
     L.signal = true; Snd.sfx.signal(); edgeFlash('#ffffff', 700); vibrate(80);
   }, 350 * fast);
@@ -2116,15 +2189,15 @@ async function runSpin(e) {
   await sleep((e.level >= 3 ? 1300 : 900) * fast);
   if (e.hit && (e.pattern === 'B' || e.pattern === 'F')) return instantHit(e, sym, e.pattern === 'F');
   if (e.group) await groupNotice(e);
-  stopReel(0, sym[0]); Snd.sfx.reelStop(); await sleep(520 * fast);
-  stopReel(2, sym[2]); Snd.sfx.reelStop(); await sleep(420 * fast);
+  stopReel(0, sym[0]); await sleep(520 * fast);
+  stopReel(2, sym[2]); await sleep(420 * fast);
 
   if (!e.reach) {
-    stopReel(1, sym[1]); Snd.sfx.reelStop(); await sleep(rush ? 450 : 650);
+    stopReel(1, sym[1]); await sleep(rush ? 450 : 650);
     return endSpin(e);
   }
   // ---- リーチ ----
-  Snd.sfx.reach(); say('リーチ'); L.bg = 'reach'; setLamp('red'); Snd.bgm('reach'); reels[1].speed = 8; shakeCam(0.25, 0.3);
+  CUES.reach(); say('リーチ'); L.bg = 'reach'; setLamp('red'); Snd.bgm('reach'); reels[1].speed = 8; shakeCam(0.25, 0.3);
   caption('リーチ!!', { color: '#ff3b5b', size: 130, y: 384, dur: 1.1 });
   await sleep(1200);
   if (!e.sp) {
@@ -2143,14 +2216,14 @@ async function groupNotice(e) {
 
 async function spReach(e, sym) {
   const hot = e.hit ? Math.max(e.level, Math.random() < 0.5 ? 3 : 2) : e.level;
-  L.spHot = hot; setLamp(hot >= 4 ? 'gold' : hot >= 3 ? 'red' : 'sp'); reels[1].speed = 3;
+  cueState.scene = 'sp'; L.spHot = hot; setLamp(hot >= 4 ? 'gold' : hot >= 3 ? 'red' : 'sp'); reels[1].speed = 3;
   battle('intro').hot = hot;
   caption('雷牙バトルリーチ', { style: hot >= 3 ? 'gold' : 'blue', size: 80, y: 150, dur: 2.2, sub: '撃破で大当り!!' });
   say('バトルリーチ！', 1.1); Snd.bgm('sp'); Snd.sfx.sp();
   await sleep(1500);
   battle('clash'); await sleep(2000);
   if (e.cutin) { Snd.sfx.cutin(); L.flashT = rt(); vibrate([150, 50, 300]); L.battle.shake = 30; caption(hot >= 4 ? '激アツ!!' : 'チャンス!!', { style: hot >= 3 ? 'gold' : 'red', size: 130, y: 380, dur: 1.1 }); await sleep(1200); }
-  battle('charge'); caption('ブチかませ!!', { style: 'silver', size: 96, y: 150, dur: 1.2 });
+  battle('charge'); CUES.charge(); caption('ブチかませ!!', { style: 'silver', size: 96, y: 150, dur: 1.2 });
   await sleep(900);
   await waitPush(e.hit && Math.random() < 0.2 ? 'rainbow' : hot >= 4 ? (Math.random() < 0.5 ? 'drop' : 'gold') : '', 6000);
   if (e.hit && e.pattern === 'D') return revival(e, sym);
@@ -2162,22 +2235,22 @@ async function spReach(e, sym) {
 
 async function puchun() {
   // プチュン：全消灯＋無音（このあと役物落下で決着）
-  Snd.cut(780); try { speechSynthesis.cancel(); } catch (_) { }
+  CUES.dark(780); try { speechSynthesis.cancel(); } catch (_) { }
   L.black = true; SU.target = 0; SU.k = 0; gim.target = 0; setLamp('off'); camZoom.target = 0.55;
   await sleep(780); L.black = false;
 }
 async function freezeMoment(ms = 420) {
   // 溜め：図柄もランプも一瞬止まり、音が消える
-  Snd.cut(ms); try { speechSynthesis.cancel(); } catch (_) { }
+  CUES.dark(ms); try { speechSynthesis.cancel(); } catch (_) { }
   reels.forEach(r => { if (r.state !== 'stop') r.state = 'hold'; });
   setLamp('off'); SU.target = 0; camZoom.target = 0.55;
   await sleep(ms);
 }
 async function impactSlam(sym, gold = false) {
   // 衝撃：筐体上部のVクリスタルが外れて液晶に激突。その瞬間に図柄・音・光・振動を集中させる
-  await vDrop(gold); L.battle = null;
+  CUES.drop(); await vDrop(gold); L.battle = null;
   if (sym) reels.forEach((r, i) => { r.state = 'stop'; let P = Math.round(r.pos); while (symAt(P) !== sym[i]) P++; r.pos = P; });
-  whiteFlash(500); Snd.sfx.impact(); shakeCam(1.6, 0.9); vibrate([90, 40, 260]);
+  setLamp('white'); CUES.impact(); shakeCam(1.6, 0.9); vibrate([90, 40, 260]);
   spawnBolt(gold ? '#ffc830' : '#ff2a20', 6, 4); setLamp('white'); setTimeout(() => { if (lampMode.mode === 'white') setLamp(gold ? 'gold' : 'rainbow'); }, 240);
   setTimeout(vRise, 1100);
 }
@@ -2213,7 +2286,7 @@ async function bigHit(e, sym, pre = 'freeze', opt = {}) {
   const hold = opt.fast || state.mode === 'rush' ? 1250 : 3600;
   L.captions = []; lampFlash = null;
   celebration = { t0: rt(), speed: hold / 3600, rush: e.rush && e.oddShow };
-  setLamp('celebration'); Snd.sfx.fanfare(celebration.speed); say('大当り！！', 1.4);
+  setLamp('celebration'); CUES.celebration(celebration.speed); say('大当り！！', 1.4);
   await sleep(hold);
   celebration = null; setLamp('rainbow');
   Snd.bgm('jackpot'); rainbowRing.visible = false; bloomBoost = 0;
@@ -2230,7 +2303,7 @@ async function bigHit(e, sym, pre = 'freeze', opt = {}) {
     else { await sleep(600); Snd.sfx.shutter(); L.shT = 0; Snd.sfx.miss(); caption('通常大当り終了', { style: 'silver', size: 90, y: 384, dur: 2.2 }); await sleep(2200); }
   }
   if (toRush) {
-    Snd.sfx.rushIn(); shakeCam(1.2, 1); vibrate([200, 60, 400]); spawnBolt('#ffc830', 5, 3); setLamp('gold'); camZoom.target = 0.4;
+    CUES.rush(); shakeCam(1.2, 1); vibrate([200, 60, 400]); spawnBolt('#ffc830', 5, 3); camZoom.target = 0.4;
     const first = state.mode !== 'rush';
     state.mode = 'rush'; state.stLeft = SPEC.stSpins; state.chain = first ? 1 : state.chain + 1; if (first) stats.rushGain = stats.gain;
     stats.maxChain = Math.max(stats.maxChain, state.chain);
@@ -2250,7 +2323,7 @@ async function runRounds() {
   for (let n = 1; n <= SPEC.rounds; n++) {
     const clock = rt();
     L.round = { n, t0: clock, rush: state.mode === 'rush', hitAt: -Infinity, endAt: null, complete: false, entries: [], displayGain, drawAt: clock };
-    att.count = 0; att.open = true; Snd.bgm('jackpot', n); Snd.sfx.clash();
+    att.count = 0; att.open = true; Snd.bgm('jackpot', n); CUES.round(n);
     if (n === SPEC.rounds) Snd.sfx.open();
     const t0 = performance.now();
     while (att.count < SPEC.roundCount && performance.now() - t0 < SPEC.roundTime * 1000) await sleep(50);
@@ -2464,10 +2537,14 @@ function updateGadgets(dt, t) {
   denGlow.material.opacity = den.open ? 0.75 + 0.25 * Math.sin(t * 30) : 0.08;
   att.k = lerp(att.k, att.open ? 1 : 0, 0.25); attGlow.material.opacity = att.k * (0.6 + 0.3 * Math.sin(t * 20));
   attGlow.material.color.setRGB(1, 0.25 + 0.2 * Math.sin(t * 20), 0.1);
-  const pk = L.push ? 0.5 + 0.5 * Math.sin(t * 14) : 0;
+  const pk = L.push ? 0.5 + 0.5 * Math.sin(t * 5) : 0;
   pushGlow.material.opacity = Math.min(1, pk * 0.9 + (L.hit ? 0.25 + 0.2 * Math.sin(t * 20) : 0) + pushPress * 0.8);
   pushCore.material.opacity = Math.min(1, 0.08 + pk * 0.6 + pushPress); pushPress = Math.max(0, pushPress - dt * 4);
   updateHandleArc(); updateVG(t); updateBTN(dt, t); updateParts(t);
+  if (lampMode.mode === 'off') {
+    for (const g of [hesoGlow, denGlow, attGlow, pushGlow, pushCore]) g.material.opacity = 0;
+    BTN.mat.emissiveIntensity = 0;
+  }
   gim.drop = lerp(gim.drop, gim.target, 1 - Math.pow(0.05, dt));
   const target = L.hit ? new THREE.Color().setHSL((t * 0.7) % 1, 1, 0.6) : state.mode === 'rush' ? new THREE.Color(0xff5020) : L.bg === 'sp' ? SU.color : new THREE.Color(0x8a4dff);
   fxLight.color.lerp(target, 0.1); fxLight.intensity = L.hit ? 22 : 10;
