@@ -622,11 +622,50 @@ const cabTex = new THREE.Texture(cabImg); cabTex.colorSpace = THREE.SRGBColorSpa
 const cabMesh = new THREE.Mesh(new THREE.PlaneGeometry(CAB_W, CAB_H), new THREE.MeshBasicMaterial({ map: cabTex, toneMapped: false }));
 scene.add(cabMesh);
 // 隣台は共有テクスチャの板と少数の発光だけで構成する。
+// 2枚の横長アトラス（各セル256×200）を6台で共有する。
+const hallScreens = Array.from({ length: 2 }, (_, i) => ({ tex: canvasTex(768, 200), phase: i * 8.7 }));
+let hallNext = 0;
+function drawHallScreen(tex, t) {
+  const { g } = tex.userData;
+  for (let cell = 0; cell < 3; cell++) {
+    const clock = t + cell * 4.3, cycle = clock % 23;
+    const hit = cycle > 21, reach = cycle > 17;
+    const hue = hit ? (clock * 95) % 360 : reach ? 8 : 215;
+    g.save(); g.translate(cell * 256, 0);
+    g.beginPath(); g.rect(0, 0, 256, 200); g.clip();
+    g.fillStyle = '#030611'; g.fillRect(0, 0, 256, 200);
+    g.save(); g.translate(128, 92); g.rotate(clock * .35);
+    for (let ray = 0; ray < 12; ray++) {
+      g.rotate(Math.PI / 6); g.fillStyle = `hsla(${hue},75%,45%,.16)`;
+      g.beginPath(); g.moveTo(0, 0); g.lineTo(280, -18); g.lineTo(280, 18); g.fill();
+    }
+    g.restore();
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = 'bold 66px sans-serif';
+    for (let reel = 0; reel < 3; reel++) {
+      const digit = hit ? 7 : reach && reel !== 1 ? 3 : 1 + Math.floor(clock * (5 + reel) + reel * 3) % 9;
+      const y = hit || (reach && reel !== 1) ? 96 : 96 + Math.sin(clock * 9 + reel) * 8;
+      g.fillStyle = '#071020'; g.fillRect(12 + reel * 82, 48, 68, 100);
+      g.strokeStyle = `hsl(${hue},65%,28%)`; g.lineWidth = 2; g.strokeRect(12 + reel * 82, 48, 68, 100);
+      g.fillStyle = `hsl(${hue},65%,65%)`; g.fillText(String(digit), 46 + reel * 82, y);
+    }
+    g.font = 'bold 17px sans-serif'; g.fillStyle = `hsl(${hue},70%,50%)`;
+    g.fillText(hit ? '大当り' : reach ? 'リーチ' : 'THUNDER', 128, 175);
+    g.restore();
+  }
+  tex.needsUpdate = true;
+}
+// 台ごとにアトラスのセル（位相）と材質の色相を変える。
 const neighbors = [];
 for (const n of [-3, -2, -1, 1, 2, 3]) {
   const group = new THREE.Group(); group.position.set(n * (CAB_W + .45), 0, -.7); scene.add(group);
   const plate = new THREE.Mesh(cabMesh.geometry, new THREE.MeshBasicMaterial({ map: cabTex, color: 0x555566, toneMapped: false })); group.add(plate);
-  const screen = new THREE.Mesh(new THREE.PlaneGeometry(6.8, 5.2), new THREE.MeshBasicMaterial({ color: 0x225577, transparent: true, opacity: .4, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const index = neighbors.length, atlas = hallScreens[index % 2];
+  const screenGeo = new THREE.PlaneGeometry(6.8, 5.2);
+  const uv = screenGeo.attributes.uv, cell = Math.floor(index / 2);
+  for (let i = 0; i < uv.count; i++) uv.setX(i, (uv.getX(i) + cell) / 3);
+  const tint = new THREE.Color().setHSL(index / 6, .23, .30);
+  const screen = new THREE.Mesh(screenGeo, new THREE.MeshBasicMaterial({ map: atlas.tex, color: tint, toneMapped: false }));
   screen.position.set(0, UY(545), .03); group.add(screen);
   const lamps = [];
   for (const x of [-7.5, 7.5]) {
@@ -636,11 +675,14 @@ for (const n of [-3, -2, -1, 1, 2, 3]) {
   neighbors.push({ screen, lamps, next: Math.random() * 2 });
 }
 function updateHall(t) {
+  if (t >= hallNext) {
+    hallNext = t + .1;
+    for (const atlas of hallScreens) drawHallScreen(atlas.tex, t + atlas.phase);
+  }
   for (const n of neighbors) {
     if (t < n.next) continue;
     n.next = t + .25 + Math.random() * .9;
-    const hue = Math.random(); n.screen.material.color.setHSL(hue, .7, .25 + Math.random() * .25);
-    n.screen.material.opacity = .15 + Math.random() * .35;
+    const hue = Math.random();
     for (const l of n.lamps) { l.material.color.setHSL(hue, .9, .55); l.material.opacity = .12 + Math.random() * .4; }
   }
 }
@@ -1670,12 +1712,13 @@ function drawLCD(t) {
   if (L.hit && !L.round && (!celebration || celebrationAge() >= 1.65)) { // 10R 1500
     c.save();
     const p = celebration ? clamp((celebrationAge() - 1.65) / .25, 0, 1) : 1;
-    const scale = 1 + .65 * Math.pow(1 - p, 2);
-    c.translate(512, 691); c.scale(scale, scale); c.translate(-(LW - 142), -(LH - 150));
-    c.save(); c.translate(LW - 142, LH - 150); c.transform(1, 0, -0.2, 1, 0, 0);
-    const g = c.createLinearGradient(0, -32, 0, 32); g.addColorStop(0, '#6a0008'); g.addColorStop(1, '#1a0002'); c.fillStyle = g; c.fillRect(-122, -32, 252, 64);
-    c.strokeStyle = metalGrad(c, -32, 32, MET.gold.stops); c.lineWidth = 5; c.strokeRect(-122, -32, 252, 64); c.restore();
-    fancyText(c, '10R 1500', LW - 136, LH - 147, 44, 'gold', t);
+    // ロゴ下端と保留上端の間へ。登場時も枠・文字をこの帯に収める。
+    const scale = 1 + .08 * Math.pow(1 - p, 2);
+    c.translate(512, 682); c.scale(scale, scale);
+    c.save(); c.transform(1, 0, -0.2, 1, 0, 0);
+    const g = c.createLinearGradient(0, -17, 0, 17); g.addColorStop(0, '#6a0008'); g.addColorStop(1, '#1a0002'); c.fillStyle = g; c.fillRect(-108, -17, 216, 34);
+    c.strokeStyle = metalGrad(c, -17, 17, MET.gold.stops); c.lineWidth = 3; c.strokeRect(-108, -17, 216, 34); c.restore();
+    fancyText(c, '10R 1500', 0, 1, 28, 'gold', t);
     c.restore();
   }
   if (L.push) {
