@@ -1,5 +1,5 @@
 // P THUNDER 雷牙 の自動チェック
-//   node tests/check.cjs          … 全項目（読み込み・物理・当り方 A/B/C/D/F）
+//   node tests/check.cjs          … 全項目（読み込み・物理・当り方 A/B/C/D/F/G）
 //   node tests/check.cjs --quick  … 読み込み・物理・当り方 A のみ
 // 前提：Playwright と Chromium が使えること（require('playwright')）、npm install 済み（three@0.160.0）。
 // CDN（cdn.jsdelivr.net）へは出ず、node_modules/three を返します。結果画像は tests/out/ に保存します。
@@ -7,7 +7,7 @@ const path = require('path'), fs = require('fs');
 const { chromium } = require('playwright');
 const ROOT = path.join(__dirname, '..'), THREE_DIR = path.join(ROOT, 'node_modules', 'three'), OUT = path.join(__dirname, 'out');
 const quick = process.argv.includes('--quick');
-const patterns = quick ? ['A'] : ['A', 'B', 'C', 'D', 'F'];
+const patterns = quick ? ['A'] : ['A', 'B', 'C', 'D', 'F', 'G'];
 const results = [];
 const ok = (name, pass, detail) => { results.push({ name, pass, detail }); console.log(`${pass ? 'OK  ' : 'NG  '} ${name}  ${detail}`); };
 

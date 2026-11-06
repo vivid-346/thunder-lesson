@@ -177,6 +177,7 @@ body:not(.menu-open) #hud,body:not(.menu-open) #controls .more{display:none!impo
     <option value="C">C 先告知</option>
     <option value="D">D 復活</option>
     <option value="F">F ハイパー</option>
+    <option value="G">G 巨大図柄（復活）</option>
   </select>
   <button id="btnSnd">音 ON</button>
   <button id="btnHall" aria-pressed="true">ホール音 ON</button>
@@ -417,6 +418,8 @@ const Snd = (() => {
     if (!cymbal) tone(reverse ? 900 : 70, sec, 'sawtooth', .055, 0, reverse ? 45 : 1800, dest);
   }
   const fx = {
+    bigStep() { tone(95, .45, 'triangle', .35, 0, 32); tone(510, .18, 'square', .07); noise(.28, .22, 0, 3100, 500); },
+    bigRevive() { tone(140, 1.6, 'sawtooth', .12, 0, 1800); noise(1.7, .2, 0, 400, 7000); },
     riser: sec => sweep(sec), downlifter: sec => sweep(sec, true),
     reverseCymbal: sec => sweep(sec, false, true),
     subDrop(sec = .6) { tone(110, Math.max(.08, Math.min(10, sec)), 'sine', .4, 0, 26); },
@@ -995,6 +998,10 @@ const BTN = { g: new THREE.Group(), z: 0, vz: 0, target: 0, active: false, style
   const geo = new THREE.SphereGeometry(1.55, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2); geo.rotateX(Math.PI / 2); geo.scale(1, 1, 0.42);
   { const pp = geo.attributes.position, uv = geo.attributes.uv; for (let i = 0; i < pp.count; i++) uv.setXY(i, pp.getX(i) / 3.1 + 0.5, pp.getY(i) / 3.1 + 0.5); }
   BTN.g.add(new THREE.Mesh(geo, BTN.mat));
+  // 元写真の文字を、せり上がり量に依存しない不透明な台座で覆う。
+  BTN.coverMat = new THREE.MeshBasicMaterial({ color: 0x65000c, toneMapped: false });
+  BTN.cover = new THREE.Mesh(new THREE.CircleGeometry(1.75, 64), BTN.coverMat);
+  BTN.cover.position.set(bx, by, .035); BTN.cover.visible = false; scene.add(BTN.cover);
   BTN.ringMat = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 0.1, transparent: true, opacity: 0 });
   BTN.g.add(new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.12, 12, 64), BTN.ringMat));
   BTN.skirtMat = new THREE.MeshStandardMaterial({ color: 0x1a1a20, metalness: 0.8, roughness: 0.25, transparent: true, opacity: 0 });
@@ -1005,10 +1012,11 @@ function btnPress() { BTN.active = false; BTN.target = -0.2; BTN.vz = -10; setTi
 function updateBTN(dt, t) {
   const a = (BTN.target - BTN.z) * 150 - BTN.vz * 13; BTN.vz += a * dt; BTN.z += BTN.vz * dt;
   const up = Math.max(0, BTN.z), showing = BTN.active || Math.abs(BTN.z) > 0.03 || BTN.target !== 0;
-  BTN.vis = lerp(BTN.vis, showing ? 1 : 0, 0.2);
+  BTN.vis = showing ? 1 : 0; // 写真との半透明クロスフェードは文字を二重にするため、動作中は不透明。
   const jit = BTN.active ? Math.sin(t * 90) * 0.02 + (Math.sin(t * 2.6) > 0.55 ? Math.sin(t * 150) * 0.06 : 0) : 0;
   BTN.g.position.x = BTN.x + jit; BTN.g.position.z = 0.04 + up; BTN.g.scale.setScalar((1 + up * 0.09) * (BTN.z < 0 ? 0.94 : 1));
   BTN.skirt.scale.z = Math.max(0.01, up); BTN.skirt.position.z = -up / 2;
+  BTN.cover.visible = showing;
   BTN.mat.opacity = BTN.ringMat.opacity = BTN.skirtMat.opacity = BTN.vis;
   const pul = BTN.active ? 0.5 + 0.5 * Math.sin(t * 5) : 0;
   if (BTN.style === 'gold') BTN.mat.emissive.setRGB(1, 0.7, 0.15); else if (BTN.style === 'rainbow') BTN.mat.emissive.setHSL((t * 0.8) % 1, 1, 0.5); else BTN.mat.emissive.setRGB(1, 0.06, 0.1);
@@ -1884,7 +1892,8 @@ function drawCaptions(c, t) {
 }
 function drawLCD(t) {
   const c = lctx; c.save();
-  if (L.battle) { drawBattle(c, t); drawBolts(c); drawReels(c, t, 'corner'); }
+  if (L.big) { drawBigReach(c, t); }
+  else if (L.battle) { drawBattle(c, t); drawBolts(c); drawReels(c, t, 'corner'); }
   else { drawBG(c, t); drawBolts(c); if (L.round) drawRound(c, t); else drawReels(c, t); }
   if (!L.dim && !L.grey && !L.hit && !L.round && L.shT === 0 && lampMode.mode !== 'off') {
     const pulse = Math.exp(-Snd.beatClock().phase * 5);
@@ -1898,6 +1907,7 @@ function drawLCD(t) {
   L.sh = lerp(L.sh, L.shT, 0.2); if (L.sh > 0.01) drawShutter(c, L.sh, t);
   if (celebration) drawCelebration(c, t);
   drawCaptions(c, t);
+  drawSerif(c, t);
   // 音と同じ時計で液晶の縁を発光。中央の図柄・文字は隠さない。
   const accent = cueState.accent;
   if (accent && lampMode.mode !== 'off' && !L.black) {
@@ -1968,9 +1978,10 @@ function lottery(mode) {
   const group = hit ? Math.random() < 0.5 : (level >= 3 ? Math.random() < 0.35 : sp ? Math.random() < 0.04 : Math.random() < 0.003);
   const cutin = sp && (hit ? Math.random() < 0.7 : level >= 3 ? Math.random() < 0.5 : Math.random() < 0.08);
   // 当り方：A=王道(PUSH) B=突当り C=先告知 D=復活 F=ハイパー
-  const pattern = !hit ? null : state.forcePattern ? state.forcePattern : mode === 'rush' ? ['A', 'B', 'F'][pickW([20, 45, 35])] : ['A', 'B', 'C', 'D', 'F'][pickW([40, 12, 15, 15, 18])];
-  const instant = pattern === 'B' || pattern === 'F', forceSp = pattern === 'A' || pattern === 'D';
-  return { hit, rush, level, reach: reach || forceSp, sp: sp || forceSp, group: instant ? false : group, cutin, mode, pattern, signal: pattern === 'C', oddShow: rush && Math.random() < 0.55 };
+  const pattern = !hit ? null : state.forcePattern ? state.forcePattern : mode === 'rush' ? ['A', 'B', 'F'][pickW([20, 45, 35])] : ['A', 'B', 'C', 'D', 'F', 'G'][pickW([34, 12, 15, 15, 18, 6])];
+  const instant = pattern === 'B' || pattern === 'F', forceSp = pattern === 'A' || pattern === 'D' || pattern === 'G';
+  const big = pattern === 'G' || (pattern === 'D' ? Math.random() < .5 : mode === 'normal' && (sp || forceSp) && Math.random() < .3);
+  return { hit, rush, level, big, reach: reach || forceSp, sp: sp || forceSp, group: instant ? false : group, cutin, mode, pattern, signal: pattern === 'C', oddShow: rush && Math.random() < 0.55 };
 }
 function decideSymbols(e) {
   if (e.hit) { const s = e.oddShow ? (Math.random() < 0.55 ? 7 : pick([1, 3, 5, 9])) : pick([2, 4, 6, 8]); return [s, s, s]; }
@@ -2205,13 +2216,92 @@ async function runSpin(e) {
     if (e.hit) { stopReel(1, sym[1], 2.2); await sleep(900); return bigHit(e, sym, 'freeze'); }
     stopReel(1, sym[1], 2.2); await sleep(1300); Snd.sfx.miss(); return endSpin(e);
   }
-  return spReach(e, sym);
+  return e.big ? bigReach(e, sym) : spReach(e, sym);
 }
 
 async function groupNotice(e) {
   caption('THUNDER STORM!!', { color: e.level >= 4 ? '#ffd23a' : e.level >= 3 ? '#ff2a3a' : '#7fe0ff', size: 104, y: 384, dur: 2.4 });
   startStorm(e.level); Snd.sfx.group(); shakeCam(0.6, 2.4); vibrate([60, 40, 60, 40, 60, 40, 60]);
   await sleep(2600);
+}
+
+// ---- 巨大図柄・共通セリフ帯（すべて液晶内） ----
+function serif(text, { style = 'normal', face = true, dur = 2 } = {}) {
+  L.serif = { text, style, face, until: rt() + dur };
+  Snd.sfx.cutin(); say(text, .95);
+}
+function drawSerif(c, t) {
+  const q = L.serif; if (!q) return;
+  if (rt() >= q.until) { L.serif = null; return; }
+  c.save(); c.beginPath(); c.rect(22, 480, 980, 296); c.clip();
+  const g = c.createLinearGradient(0, 490, 0, 770);
+  g.addColorStop(0, q.style === 'gold' ? '#ffc82f' : q.style === 'red' ? '#be1333' : '#17ad60'); g.addColorStop(1, '#67edff');
+  c.fillStyle = g; c.fillRect(28, 490, 968, 278);
+  const rim = c.createLinearGradient(0, 0, 1024, 0);
+  for (let i = 0; i <= 6; i++) rim.addColorStop(i / 6, `hsl(${i * 60},100%,65%)`);
+  c.strokeStyle = rim; c.lineWidth = 14; c.strokeRect(30, 494, 964, 270);
+  c.strokeStyle = '#fff1ad'; c.lineWidth = 3; c.strokeRect(42, 506, 940, 246);
+  if (q.face) { c.save(); c.beginPath(); c.rect(45, 510, 250, 240); c.clip(); drawHero(c, 169, 1510, 2.3, { glow: q.style === 'red' ? '#ff6940' : '#b8faff' }, t); c.restore(); }
+  c.font = `64px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+  c.lineWidth = 12; c.strokeStyle = '#090609'; c.strokeText(q.text, 638, 628, 660);
+  c.fillStyle = '#ff9d22'; c.fillText(q.text, 638, 628, 660); c.restore();
+}
+function drawBigReach(c, t) {
+  const b = L.big, age = rt() - b.stepAt;
+  c.save(); c.beginPath(); c.rect(0, 0, LW, LH); c.clip();
+  c.fillStyle = b.phase === 'drop' ? '#080b14' : '#160916'; c.fillRect(0, 0, LW, LH);
+  if (b.phase !== 'drop') {
+    for (let i = 0; i < 64; i++) {
+      const a = i * Math.PI / 32, r = 160 + ((t * 390 + i * 31) % 460);
+      c.strokeStyle = b.power > .5 ? `hsla(${i * 23 + t * 70},100%,78%,.65)` : 'rgba(255,255,255,.45)';
+      c.lineWidth = 2 + b.power * 5; c.beginPath(); c.moveTo(512 + Math.cos(a) * r, 400 + Math.sin(a) * r); c.lineTo(512 + Math.cos(a) * (r + 180), 400 + Math.sin(a) * (r + 180)); c.stroke();
+    }
+  }
+  if (b.phase === 'aligned') {
+    for (let i = 0; i < 3; i++) c.drawImage(symSprite(b.target), i * 330 - 10, 60, 370, 710);
+  } else {
+    const dy = b.phase === 'feed' ? -(Math.max(0, 1 - age / .8) ** 3) * 760 : 0;
+    c.drawImage(symSprite(b.n), 145, -65 + dy, 790, 940);
+    c.drawImage(symSprite(b.target), 18, 10, 110, 116); c.drawImage(symSprite(b.target), 128, 10, 110, 116);
+    if (age < 1.1 && b.phase === 'feed') for (let i = 0; i < 24; i++) {
+      const a = i * 2.4, r = age * (210 + i * 12);
+      c.save(); c.translate(512 + Math.cos(a) * r, 400 + Math.sin(a) * r + age * age * 130); c.rotate(a + age * 5);
+      c.fillStyle = i % 2 ? '#c6ddf4' : '#705c38'; c.fillRect(-9, -4, 18, 8); c.restore();
+    }
+  }
+  if (b.phase === 'revive') for (let i = 0; i < 13; i++) {
+    c.fillStyle = `hsla(${i * 29 + t * 160},100%,70%,.65)`; c.shadowColor = c.fillStyle; c.shadowBlur = 25;
+    c.fillRect(90 + i * 70 + Math.sin(t * 8 + i) * 20, 0, 18, LH);
+  }
+  if (b.phase !== 'drop') {
+    c.shadowColor = '#ffb300'; c.shadowBlur = 24; c.strokeStyle = '#ffda56'; c.lineWidth = 12; c.strokeRect(8, 8, LW - 16, LH - 16);
+    for (let i = 0; i < 44; i++) {
+      const x = i * 24, h = 12 + 28 * (.5 + .5 * Math.sin(t * 13 + i * 2.7));
+      c.fillStyle = i % 2 ? '#fff4a3' : '#ffad18';
+      for (const y of [0, LH]) { c.beginPath(); c.moveTo(x, y); c.lineTo(x + 12, y === 0 ? h : y - h); c.lineTo(x + 24, y); c.fill(); }
+      const y = i * 19; for (const x of [0, LW]) { c.beginPath(); c.moveTo(x, y); c.lineTo(x === 0 ? h : x - h, y + 9); c.lineTo(x, y + 19); c.fill(); }
+    }
+  }
+  c.restore();
+}
+async function bigReach(e, sym) {
+  cueState.scene = 'sp'; L.battle = null; L.captions = []; Snd.bgm(null); setLamp('gold');
+  reels[1].state = 'hold';
+  const prev = n => (n + 7) % 9 + 1;
+  const b = L.big = { target: sym[0], n: prev(prev(sym[0])), stepAt: rt(), phase: 'feed', power: 0 };
+  serif('まだだ!!!', { style: 'gold', dur: 2.1 });
+  Snd.fx.bigStep(); await sleep(2200); L.serif = null;
+  for (const [i, n] of [prev(prev(sym[0])), prev(sym[0])].entries()) {
+    b.n = n; b.phase = 'feed'; b.stepAt = rt(); b.power = i ? 1 : .35;
+    Snd.fx.bigStep(); Snd.fx.riser(i ? 3 : 2.4); await sleep(i ? 3300 : 2700);
+  }
+  b.phase = 'drop'; CUES.dark(650); try { speechSynthesis.cancel(); } catch (_) {} await sleep(700);
+  Snd.fx.subDrop(1.2); serif('どうしてだよぉぉぉ!!', { style: 'red', dur: 2.5 }); await sleep(2700); L.serif = null;
+  if (!e.hit) { stopReel(1, b.n, 1); L.big = null; return endSpin(e); }
+  b.phase = 'revive'; setLamp('rainbow'); Snd.fx.bigRevive(); Snd.fx.riser(1.6); await sleep(1600);
+  b.n = sym[0]; b.phase = 'feed'; b.stepAt = rt(); Snd.fx.bigStep(); await sleep(900);
+  b.phase = 'aligned'; await sleep(1300); L.big = null;
+  return bigHit(e, sym, 'freeze');
 }
 
 async function spReach(e, sym) {
