@@ -165,6 +165,8 @@ body:not(.menu-open) #hud,body:not(.menu-open) #controls .more{display:none!impo
   <span class="more">
   <label><input type="checkbox" id="autoAim" checked>オート右打ち</label>
   <button id="btnView">全体表示</button>
+  <label>画質<select id="qualitySel"><option value="auto">自動</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></label>
+  <label><input type="checkbox" id="fpsToggle">FPS表示</label>
   <select id="probSel">
     <option value="real">実機 1/319.9</option>
     <option value="demo">デモ 1/30</option>
@@ -211,6 +213,7 @@ body:not(.menu-open) #hud,body:not(.menu-open) #controls .more{display:none!impo
   </div>
 </div>
 <div id="err"></div>
+<output id="fpsMeter" hidden style="position:fixed;right:6px;top:6px;z-index:20;pointer-events:none;white-space:pre;font:11px monospace;color:#bfffd3;background:#001b; padding:6px"></output>
 
 <script>
 window.addEventListener('error', e => { document.getElementById('err').textContent += (e.message || e) + '\n'; });
@@ -577,7 +580,9 @@ const WALL = { cx: 0, cy: UY(650), a: 398 / S_PX, b: 436 / S_PX, n: 3.2 };
 const segs = [], wallSegs = [];
 function mkSeg(x1, y1, x2, y2, o = {}) {
   const s = { x1, y1, x2, y2, dx: x2 - x1, dy: y2 - y1, e: o.e ?? 0.25, mu: o.mu ?? 0.06, active: o.active || null };
-  s.len2 = s.dx * s.dx + s.dy * s.dy; return s;
+  s.len2 = s.dx * s.dx + s.dy * s.dy;
+  s.minX = Math.min(x1,x2)-BR; s.maxX = Math.max(x1,x2)+BR;
+  s.minY = Math.min(y1,y2)-BR; s.maxY = Math.max(y1,y2)+BR; return s;
 }
 const segP = (a, b, c, d, o) => { const s = mkSeg(UX(a), UY(b), UX(c), UY(d), o); segs.push(s); return s; };
 // 盤面の外枠（スーパー楕円）
@@ -628,6 +633,7 @@ function collide(b, nx, ny, pen, e, mu) {
   const nvn = -ee * vn; b.vx = nx * nvn + tx * vt; b.vy = ny * nvn + ty * vt; return -vn;
 }
 function segCollide(b, s) {
+  if (b.x < s.minX || b.x > s.maxX || b.y < s.minY || b.y > s.maxY) return;
   let t = ((b.x - s.x1) * s.dx + (b.y - s.y1) * s.dy) / s.len2; t = t < 0 ? 0 : t > 1 ? 1 : t;
   const dx = b.x - (s.x1 + s.dx * t), dy = b.y - (s.y1 + s.dy * t), dd = dx * dx + dy * dy;
   if (dd < BR * BR && dd > 1e-12) { const dl = Math.sqrt(dd); collide(b, dx / dl, dy / dl, BR - dl, s.e, s.mu); }
@@ -786,7 +792,7 @@ for (const n of [-3, -2, -1, 1, 2, 3]) {
 }
 function updateHall(t) {
   if (t >= hallNext) {
-    hallNext = t + .1;
+    hallNext = t + (qualityLevel <= 1 ? .4 : .1);
     for (const atlas of hallScreens) drawHallScreen(atlas.tex, t + atlas.phase);
   }
   for (const n of neighbors) {
@@ -1250,7 +1256,26 @@ const MET = {
 };
 const MET_POS = [0, 0.24, 0.49, 0.51, 0.78, 1];
 function metalGrad(c, y0, y1, stops) { const g = c.createLinearGradient(0, y0, 0, y1); stops.forEach((s, i) => g.addColorStop(MET_POS[i], s)); return g; }
+// Bounded offscreen cache: retain rainbow's time-dependent colour animation.
+const textCache = new Map(); let textCachePixels = 0;
+document.fonts && document.fonts.ready.then(() => { textCache.clear(); textCachePixels = 0; });
 function fancyText(c, text, x, y, size, style = 'gold', t = now) {
+  if (style === 'rainbow') return paintFancyText(c, text, x, y, size, style, t);
+  const key = JSON.stringify([text, size, style]);
+  let sprite = textCache.get(key);
+  if (!sprite) {
+    const g = lctx; g.save(); g.font = `${size}px ${FONT}`;
+    const width = Math.min(940, g.measureText(text).width); g.restore();
+    const pad = Math.ceil(size * .8 + 4), cv = document.createElement('canvas');
+    cv.width = Math.ceil(width + pad * 2); cv.height = Math.ceil(size * 2.6 + 8);
+    paintFancyText(cv.getContext('2d'), text, cv.width / 2, cv.height / 2, size, style, t);
+    sprite = cv;
+    if (textCachePixels + cv.width * cv.height > 8 * 1024 * 1024) { textCache.clear(); textCachePixels = 0; }
+    textCache.set(key, cv); textCachePixels += cv.width * cv.height;
+  }
+  c.drawImage(sprite, x - sprite.width / 2, y - sprite.height / 2);
+}
+function paintFancyText(c, text, x, y, size, style = 'gold', t = now) {
   c.save(); c.translate(x, y); c.transform(1, 0, -0.08, 1, 0, 0);
   c.font = `${size}px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
   const mw = c.measureText(text).width; if (mw > 940) c.scale(940 / mw, 940 / mw);
@@ -1362,18 +1387,32 @@ function rays(c, kind, cx, cy, rot, alpha, add = true) {
   const r = RAYS[kind]; c.save(); c.globalAlpha = alpha; if (add) c.globalCompositeOperation = 'lighter';
   c.translate(cx, cy); c.rotate(rot); c.drawImage(r, -r.width / 2, -r.height / 2); c.restore();
 }
+const glowCache = new Map();
+function cachedGlow(col, core = false) {
+  const key = col + core; let cv = glowCache.get(key);
+  if (!cv) {
+    cv = document.createElement('canvas'); cv.width = cv.height = core ? 256 : 64;
+    const g = cv.getContext('2d'), r = cv.width/2, grad = g.createRadialGradient(r,r,0,r,r,r);
+    grad.addColorStop(0,core ? '#fff' : col); if (core) grad.addColorStop(.12,col);
+    grad.addColorStop(1,'rgba(0,0,0,0)'); g.fillStyle=grad; g.fillRect(0,0,cv.width,cv.height);
+    if (glowCache.size >= 64) glowCache.clear(); glowCache.set(key,cv);
+  }
+  return cv;
+}
 function flare(c, x, y, r, col, a = 1) {
   c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = a;
-  const g = c.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.12, col); g.addColorStop(1, 'rgba(0,0,0,0)');
-  c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2); c.restore();
+  if (qualityLevel === 6) {
+    const g=c.createRadialGradient(x,y,0,x,y,r); g.addColorStop(0,'#fff'); g.addColorStop(.12,col); g.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle=g; c.fillRect(x-r,y-r,r*2,r*2);
+  } else c.drawImage(cachedGlow(col,true), x-r,y-r,r*2,r*2);
+  c.restore();
 }
 const DUST = Array.from({ length: 70 }, () => ({ x: Math.random() * LW, y: Math.random() * LH, s: rand(1, 3.5), v: rand(8, 40), p: rand(7) }));
 function dust(c, t, col, dt = 0.016) {
   c.save(); c.globalCompositeOperation = 'lighter';
   DUST.forEach(d => {
     const y = (d.y - t * d.v) % LH, yy = y < 0 ? y + LH : y, x = d.x + Math.sin(t + d.p) * 12, a = 0.35 + 0.35 * Math.sin(t * 3 + d.p);
-    const g = c.createRadialGradient(x, yy, 0, x, yy, d.s * 4); g.addColorStop(0, col.replace('A', a.toFixed(2))); g.addColorStop(1, col.replace('A', '0'));
-    c.fillStyle = g; c.fillRect(x - d.s * 4, yy - d.s * 4, d.s * 8, d.s * 8);
+    c.globalAlpha = a; c.drawImage(cachedGlow(col.replace('A','1')), x-d.s*4, yy-d.s*4, d.s*8,d.s*8);
   });
   c.restore();
 }
@@ -1382,7 +1421,17 @@ function speedLines(c, cx, cy, n, col) {
   for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, r0 = rand(220, 420), r1 = r0 + rand(160, 520); c.lineWidth = rand(1, 4); c.globalAlpha = rand(0.15, 0.5); c.beginPath(); c.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); c.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); c.stroke(); }
   c.restore();
 }
-function baseGrad(c, inner, outer) { const g = c.createRadialGradient(LW / 2, LH * 0.45, 30, LW / 2, LH / 2, 720); g.addColorStop(0, inner); g.addColorStop(1, outer); c.fillStyle = g; c.fillRect(0, 0, LW, LH); }
+const bgCache = new Map();
+function baseGrad(c, inner, outer) {
+  const key = inner + outer; let cv = bgCache.get(key);
+  if (!cv) {
+    cv = document.createElement('canvas'); cv.width = LW; cv.height = LH;
+    const g = cv.getContext('2d'), gradient = g.createRadialGradient(LW/2,LH*.45,30,LW/2,LH/2,720);
+    gradient.addColorStop(0,inner); gradient.addColorStop(1,outer); g.fillStyle=gradient; g.fillRect(0,0,LW,LH);
+    bgCache.set(key,cv);
+  }
+  c.drawImage(cv,0,0);
+}
 function drawBG(c, t) {
   const bg = L.bg, cx = LW / 2, cy = LH * 0.45;
   if (bg === 'normal') {
@@ -1891,7 +1940,7 @@ function drawCaptions(c, t) {
   });
 }
 function drawLCD(t) {
-  const c = lctx; c.save();
+  const c = lctx; c.save(); c.scale(lcdCanvas.width / LW, lcdCanvas.height / LH);
   if (L.big) { drawBigReach(c, t); }
   else if (L.battle) { drawBattle(c, t); drawBolts(c); drawReels(c, t, 'corner'); }
   else { drawBG(c, t); drawBolts(c); if (L.round) drawRound(c, t); else drawReels(c, t); }
@@ -2639,8 +2688,9 @@ function applyView() {
 function changeZoom(factor) { VIEW.zoom = clamp(VIEW.zoom * factor, .42, 3); applyView(); }
 function resetView() { VIEW.zoom = 1; VIEW.panX = VIEW.panY = 0; applyView(); }
 let baseCamZ = 30, zoomZ = 20, bloomBoost = 0, fireTimer = 0, last = performance.now();
+let qualityLevel = 6;
 function resize() {
-  const w = innerWidth, h = innerHeight; renderer.setSize(w, h); composer.setSize(w, h); bloom.resolution.set(w, h);
+  const w = innerWidth, h = innerHeight; renderer.setSize(w, h); composer.setSize(w, h); sizeBloom(w, h);
   camera.aspect = w / h; const f = Math.tan(camera.fov * Math.PI / 360);
   // HUD と操作バーを避けて筐体画像が収まるように
   const narrow = camera.aspect < 0.9, ctl = $('controls').getBoundingClientRect(), hud = $('hud').getBoundingClientRect();
@@ -2655,6 +2705,46 @@ function resize() {
 }
 addEventListener('resize', resize); resize(); setTimeout(resize, 300); document.fonts && document.fonts.ready.then(resize);
 
+// Ordered degradation: bloom → LEDs → shader → LCD → neighbours → DPR.
+
+const perf = { frames:0, elapsed:0, physics:0, lcd:0, render:0, other:0, warmup:1, bad:0 };
+function sizeBloom(w,h) {
+  const ratio = renderer.getPixelRatio() * (typeof qualityLevel === 'undefined' ? 1 : qualityLevel < 6 ? .5 : 1);
+  bloom.setSize(Math.max(1,Math.round(w*ratio)),Math.max(1,Math.round(h*ratio)));
+}
+function applyQuality(level) {
+  qualityLevel = level;
+  const dpr = Math.min(devicePixelRatio, IS_PHONE ? 1.5 : 2, level === 0 ? 1 : Infinity);
+  renderer.setPixelRatio(dpr); composer.setPixelRatio(dpr); sizeBloom(innerWidth,innerHeight);
+  if (crystalPoints) crystalPoints.geometry.setDrawRange(0, level <= 4 ? Math.ceil(crystalPoints.geometry.attributes.position.count*.5) : Infinity);
+  for (const mat of [lampSurface.material, crystalPoints && crystalPoints.material].filter(Boolean)) {
+    const precision = level <= 3 ? 'mediump' : 'highp';
+    if (mat.precision !== precision) { mat.precision = precision; mat.needsUpdate = true; }
+  }
+  const scale = level <= 2 ? .75 : 1;
+  if (lcdCanvas.width !== LW*scale) { lcdCanvas.width=LW*scale; lcdCanvas.height=LH*scale; lcdTex.dispose(); lcdTex.needsUpdate=true; }
+}
+$('fpsToggle').checked = new URLSearchParams(location.search).has('fps');
+$('fpsMeter').hidden = !$('fpsToggle').checked;
+$('fpsToggle').onchange = () => { $('fpsMeter').hidden = !$('fpsToggle').checked; };
+$('qualitySel').onchange = () => {
+  applyQuality(({auto:6,high:6,medium:2,low:0})[$('qualitySel').value]);
+  perf.frames=perf.elapsed=perf.physics=perf.lcd=perf.render=perf.other=perf.bad=0; perf.warmup=1;
+};
+function recordFrame(ms, p, lcd, render, other) {
+  if (document.hidden || ms > 250) return;
+  perf.frames++; perf.elapsed+=ms; perf.physics+=p; perf.lcd+=lcd; perf.render+=render; perf.other+=other;
+  if (perf.elapsed < (perf.warmup ? 3000 : 4000)) return;
+  const fps = perf.frames*1000/perf.elapsed, avg = n => (n/perf.frames).toFixed(1);
+  $('fpsMeter').textContent = `${fps.toFixed(1)} FPS  間隔 ${avg(perf.elapsed)}ms\n処理 ${avg(perf.physics+perf.lcd+perf.render+perf.other)}ms\n物理 ${avg(perf.physics)} / 液晶 ${avg(perf.lcd)} / 3D ${avg(perf.render)}ms\nその他 ${avg(perf.other)}ms  画質 ${qualityLevel}/6`;
+  if ($('qualitySel').value === 'auto' && qualityLevel > 0) {
+    perf.bad = fps < 48 ? perf.bad+1 : 0;
+    if (perf.bad >= (perf.warmup ? 1 : 2)) { applyQuality(qualityLevel-1); perf.bad=0; }
+  }
+  perf.warmup=0; perf.frames=perf.elapsed=perf.physics=perf.lcd=perf.render=perf.other=0;
+}
+// Hidden-tab gaps must not lower quality.
+addEventListener('visibilitychange', () => { last=performance.now(); perf.frames=perf.elapsed=perf.physics=perf.lcd=perf.render=perf.other=perf.bad=0; });
 const tmpM = new THREE.Matrix4();
 function physics(dt) {
   // 発射
@@ -2702,7 +2792,7 @@ function updateGadgets(dt, t) {
   const target = L.hit ? new THREE.Color().setHSL((t * 0.7) % 1, 1, 0.6) : state.mode === 'rush' ? new THREE.Color(0xff5020) : L.bg === 'sp' ? SU.color : new THREE.Color(0x8a4dff);
   fxLight.color.lerp(target, 0.1); fxLight.intensity = L.hit ? 22 : 10;
   rainbowRing.rotation.z += dt * 2; rainbowRing.children.forEach((m, i) => { m.rotation.x = Math.sin(t * 2 + i) * 0.5; m.rotation.y = Math.cos(t * 1.5 + i) * 0.5; });
-  bloom.strength = lerp(bloom.strength, 0.6 + bloomBoost + SU.k * 0.5, 0.1);
+  bloom.strength = lerp(bloom.strength, (0.6 + bloomBoost + SU.k * 0.5) * (qualityLevel < 6 ? .8 : 1), 0.1);
 }
 
 function updateCamera(dt) {
@@ -2711,11 +2801,12 @@ function updateCamera(dt) {
 }
 
 function frame() {
-  const tNow = performance.now(); const dt = Math.min(1 / 12, (tNow - last) / 1000); last = tNow; now += dt;
-  physics(dt); updateReels(dt); Snd.update(dt, reels.some(r => r.state === 'spin'), balls.length); updateParticles(dt); updateSummon(dt); updateGroup(dt); updateGadgets(dt, now); updateLamps(dt, now); updateCamera(dt);
-  updateHall(now); drawLCD(now);
+  const tNow = performance.now(), frameMs = tNow-last; const dt = Math.min(1 / 12, frameMs / 1000); last = tNow; now += dt;
+  physics(dt); const physicsEnd=performance.now(); updateReels(dt); Snd.update(dt, reels.some(r => r.state === 'spin'), balls.length); updateParticles(dt); updateSummon(dt); updateGroup(dt); updateGadgets(dt, now); updateLamps(dt, now); updateCamera(dt);
+  updateHall(now); const lcdStart=performance.now(); drawLCD(now); const lcdEnd=performance.now();
   hudT -= dt; if (hudT <= 0) { hudT = 0.1; updateHUD(); }
-  composer.render();
+  const renderStart=performance.now(); composer.render(); const renderEnd=performance.now();
+  recordFrame(frameMs, physicsEnd-tNow, lcdEnd-lcdStart, renderEnd-renderStart, lcdStart-physicsEnd+renderStart-lcdEnd);
   requestAnimationFrame(frame);
 }
 idleLook();
