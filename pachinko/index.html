@@ -1543,8 +1543,9 @@ function drawPushPrompt(c, t) {
   else if (p.style === 'rainbow') { g.addColorStop(0, '#ffffff'); g.addColorStop(0.4, `hsl(${(t * 300) % 360},100%,55%)`); g.addColorStop(1, `hsl(${(t * 300 + 120) % 360},100%,30%)`); }
   else { g.addColorStop(0, '#ffb0b0'); g.addColorStop(0.4, '#f0101e'); g.addColorStop(1, '#3a0006'); }
   c.fillStyle = g; c.fill(); c.restore();
-  fancyText(c, 'PUSH', bx, by + 4, 38, 'silver', t);
-  c.save(); c.fillStyle = 'rgba(0,0,0,.65)'; c.fillRect(bx - 182, 690, 364, 16); c.fillStyle = metalGrad(c, 692, 704, MET.gold.stops); c.fillRect(bx - 180, 692, 360 * rem, 12); c.restore();
+  fancyText(c, p.mash ? '連打せよ!!' : 'PUSH', bx, by + 4, p.mash ? 29 : 38, 'silver', t);
+  if (p.mash) fancyText(c, `${p.count} / ${p.goal}`, bx, 655, 26, 'gold', t);
+  c.save(); c.fillStyle = 'rgba(0,0,0,.65)'; c.fillRect(bx - 182, 690, 364, 16); c.fillStyle = metalGrad(c, 692, 704, MET.gold.stops); c.fillRect(bx - 180, 692, 360 * (p.mash ? p.count / p.goal : rem), 12); c.restore();
 }
 
 /* ---- 液晶バトル：雷牙（ライガ） vs 黒雲獣ゴウマ（オリジナルキャラクター） ---- */
@@ -1849,10 +1850,10 @@ function drawHoldIcon(c, x, y, r, lvl, t, cur = false) {
 }
 function drawHolds(c, t) {
   const y = LH - 62;
-  if (state.current) drawHoldIcon(c, 78, y, 28, state.current.level, t, true);
+  if (state.current) drawHoldIcon(c, 78, y, 28, state.current.shownLevel ?? state.current.level, t, true);
   for (let i = 0; i < SPEC.holdMax; i++) {
     const h = state.holds[i], x = 178 + i * 92;
-    if (h) drawHoldIcon(c, x, y, 30, h.level, t); else gem(c, x, y, 30, '#000', '#000', false);
+    if (h) drawHoldIcon(c, x, y, 30, h.shownLevel ?? h.level, t); else gem(c, x, y, 30, '#000', '#000', false);
   }
   if (!L.hit) {
     c.save(); c.font = `34px ${FONT}`; c.textAlign = 'right'; c.textBaseline = 'middle';
@@ -1959,6 +1960,7 @@ function drawLCD(t) {
   if (celebration) drawCelebration(c, t);
   drawCaptions(c, t);
   drawSerif(c, t);
+  drawSpinNotice(c, t);
   // 音と同じ時計で液晶の縁を発光。中央の図柄・文字は隠さない。
   const accent = cueState.accent;
   if (accent && lampMode.mode !== 'off' && !L.black) {
@@ -2032,7 +2034,14 @@ function lottery(mode) {
   const pattern = !hit ? null : state.forcePattern ? state.forcePattern : mode === 'rush' ? ['A', 'B', 'F'][pickW([20, 45, 35])] : ['A', 'B', 'C', 'D', 'F', 'G'][pickW([34, 12, 15, 15, 18, 6])];
   const instant = pattern === 'B' || pattern === 'F', forceSp = pattern === 'A' || pattern === 'D' || pattern === 'G';
   const big = pattern === 'G' || (pattern === 'D' ? Math.random() < .5 : mode === 'normal' && (sp || forceSp) && Math.random() < .3);
-  return { hit, rush, level, big, reach: reach || forceSp, sp: sp || forceSp, group: instant ? false : group, cutin, mode, pattern, signal: pattern === 'C', oddShow: rush && Math.random() < 0.55 };
+  // 演出だけを抽選。強い予告ほど当り側に偏らせ、スペック抽選には介入しない。
+  const pseudo = hit ? pickW([18, 36, 32, 14]) + 1 : pickW([76, 22, 1.999, .001]) + 1;
+  const step = hit ? pickW([2, 8, 15, 30, 30, 15]) : pickW([35, 38, 21, 5.5, .5, 0]);
+  const notices = { pseudo, step, announce: hit && Math.random() < .24,
+    mash: (reach || forceSp) && Math.random() < (hit ? .65 : .35),
+    thunder: level >= 2 && Math.random() < .8 };
+  return { ...notices, shownLevel: level ? (Math.random() < .65 ? 0 : level) : 0,
+    hit, rush, level, big, reach: reach || forceSp, sp: sp || forceSp, group: instant ? false : group, cutin, mode, pattern, signal: pattern === 'C', oddShow: rush && Math.random() < 0.55 };
 }
 function decideSymbols(e) {
   if (e.hit) { const s = e.oddShow ? (Math.random() < 0.55 ? 7 : pick([1, 3, 5, 9])) : pick([2, 4, 6, 8]); return [s, s, s]; }
@@ -2064,7 +2073,7 @@ function onEntry(type, b) {
 let hesoFlash = 0, pushPress = 0;
 const sinks = []; // 入賞口に吸い込まれる玉
 function onHoldEffect(e, p) {
-  const lvl = e.level; CUES.hold(lvl);
+  const lvl = e.shownLevel ?? e.level; CUES.hold(lvl);
   if (lvl === 0) { burst(p.x, p.y, 0.6, 0xffffff, 18, 3, 0.5); return; }
   const col = LEVEL_COL[lvl];
   if (lvl === 1) { burst(p.x, p.y, 0.6, col, 40, 4, 0.8); }
@@ -2231,8 +2240,87 @@ function idleLook() { cueState.scene = 'idle'; Snd.bgm(state.mode === 'rush' ? '
 /* =========================================================
  *  9. 変動シーケンス（async）
  * ========================================================= */
+// 通常変動の小予告。液晶座標だけで描画し、終了時は必ず消す。
+const NOTICE_COL = ['#298dff', '#31ee78', '#ff2845', '#ffd044', '#ffffff'];
+function drawSpinNotice(c, t) {
+  const n = L.spinNotice;
+  if (n) {
+    c.save();
+    for (let i = 0; i < n.step; i++) {
+      const x = 42 + i * 190, y = 112 + Math.sin(t * 18 - i) * 3;
+      c.fillStyle = '#081126'; c.fillRect(x, y, 178, 94);
+      c.strokeStyle = i === 4 ? `hsl(${t * 300 % 360},100%,65%)` : NOTICE_COL[i];
+      c.lineWidth = 6; c.strokeRect(x, y, 178, 94);
+      fancyText(c, `STEP${i + 1}`, x + 89, y + 49, 30, ['blue','silver','red','gold','rainbow'][i], t);
+    }
+    if (n.pseudo > 1) fancyText(c, `×${n.pseudo}`, 820, 490, 106, n.pseudo === 4 ? 'rainbow' : n.pseudo === 3 ? 'gold' : 'blue', t);
+    c.restore();
+  }
+  const h = L.holdBurst;
+  if (h) {
+    const age = rt() - h.at;
+    if (age > .4) { L.holdBurst = null; return; }
+    c.save(); c.globalAlpha = 1 - age / .4; c.strokeStyle = LEVEL_COL[h.level]; c.lineWidth = 9;
+    for (let i = 0; i < 12; i++) {
+      const a = i * Math.PI / 6, r = 35 + age * 280;
+      c.beginPath(); c.moveTo(78 + Math.cos(a) * r, LH - 62 + Math.sin(a) * r);
+      c.lineTo(78 + Math.cos(a) * (r + 35), LH - 62 + Math.sin(a) * (r + 35)); c.stroke();
+    }
+    c.restore();
+  }
+}
+async function spinNotices(e, ms) {
+  const start = performance.now(), rush = e.mode === 'rush';
+  const n = L.spinNotice = { step: 0, pseudo: 1 };
+  const events = [];
+  const at = (fraction, fn) => events.push({ at: ms * fraction, fn });
+  // 同一モードの強い保留を対象に、前の変動から同じ雷予告を繰り返す。
+  if (e.thunder || state.holds.some(h => h.mode === e.mode && h.thunder)) at(.04, () => {
+    spawnBolt('#80cfff', 2, 2); cueAccent('#80cfff', .22); Snd.sfx.holdBlue();
+    caption('雷の気配…', { style: 'blue', size: 54, y: 270, dur: .45 });
+  });
+  if (rush) at(.02, () => { serif('雷牙、加速！', { face: true, dur: .22 }); cueAccent('#ffc040', .18); });
+  for (let i = 1; i <= (e.step || 0); i++) at(.08 + i * .085, () => {
+    n.step = i; Snd.sfx.cutin(); cueAccent(NOTICE_COL[i - 1], .16);
+  });
+  for (let i = (e.shownLevel ?? e.level) + 1; i <= e.level; i++) at(.1 + i * .09, () => {
+    e.shownLevel = i; L.holdBurst = { at: rt(), level: i }; CUES.hold(i); Snd.fx.subDrop(.12);
+  });
+  for (let i = 2; i <= (e.pseudo || 1); i++) at(.15 + (i - 2) * .23, async () => {
+    // 仮停止で大当り図柄を見せない。
+    [1, 2, 3].forEach((v, j) => stopReel(j, v));
+    Snd.sfx.clash(); cueAccent(i === 4 ? '#ffd040' : '#ffffff', .18);
+    await sleep(rush ? 95 : 260); n.pseudo = i; Snd.fx.riser(.15); reelsStart();
+  });
+  if (e.announce) at(.86, () => {
+    Snd.sfx.kyuin(); edgeFlash('#ffffff', 330); cueAccent('#ffd040', .4);
+    caption('キュイン！', { style: 'rainbow', size: 72, y: 300, dur: .5 });
+  });
+  events.sort((a, b) => a.at - b.at);
+  try {
+    for (const ev of events) { await sleep(Math.max(0, start + ev.at - performance.now())); await ev.fn(); }
+    await sleep(Math.max(0, start + ms - performance.now()));
+  } finally { L.spinNotice = null; }
+}
+function waitMash(ms) {
+  return new Promise(resolve => {
+    const p = L.push = { t0: rt(), dur: ms / 1000, style: 'gold', mash: true, count: 0, goal: 10 };
+    btnUp('gold'); CUES.push(); caption('連打で突破せよ!!', { style: 'gold', size: 70, y: 180, dur: ms / 1000 });
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true; clearTimeout(timer); pushResolve = null; L.push = null; btnPress(); resolve();
+    };
+    pushResolve = () => {
+      p.count++; pushPress = 1; Snd.sfx.press(); cueAccent('#ffd040', .08);
+      if (p.count >= p.goal) { Snd.fx.stinger(); caption('突破!!', { style: 'gold', size: 85, y: 380, dur: .55 }); finish(); }
+    };
+    // 無操作でも進行し、連打結果は当落を変えない。
+    const timer = setTimeout(finish, ms);
+  });
+}
+
 async function runSpin(e) {
-  if (e.mode !== state.mode) { e = lottery(state.mode); e.level = 0; }
+  if (e.mode !== state.mode) { e = lottery(state.mode); e.level = 0; e.shownLevel = 0; e.thunder = false; }
   state.current = e; state.spinning = true;
   stats.spins++; stats.since++;
   const rush = state.mode === 'rush';
@@ -2241,17 +2329,17 @@ async function runSpin(e) {
   const fast = rush ? 0.4 : 1;
   // 保留数は消化開始時の残り個数。短縮はリーチなしハズレに限定。
   const plain = !e.hit && !e.reach;
-  const lead = plain ? (rush ? 850 : state.holds.length >= 3 ? 1500 : 3300) : rush ? 400 : 2600;
+  const lead = plain ? (rush ? 850 : state.holds.length >= 3 ? 1500 : 2100) : rush ? 400 : 1900;
   idleLook(); L.hit = false; L.signal = false; L.grey = 0; CUES.spin(); reelsStart();
   if (e.signal) setTimeout(() => { // 先告知：専用音・虹枠・星
     L.signal = true; Snd.sfx.signal(); edgeFlash('#ffffff', 700); vibrate(80);
   }, 350 * fast);
 
-  if (e.level >= 3) { // 激アツ保留の消化：開始時に大振動
+  if ((e.shownLevel ?? e.level) >= 3) { // 既に見えている激アツ保留だけ開始時に告知
     edgeFlash(LEVEL_COL[e.level], 1000); shakeCam(e.level === 4 ? 1.6 : 0.9, 1.2); cssShake(e.level === 4); vibrate([200, 80, 200]);
-    caption(e.level === 4 ? '激アツ!!' : 'チャンス!!', { color: e.level === 4 ? '#ffd23a' : '#ff2a3a', size: 120, y: 384, dur: 1.2 }); Snd.sfx.kyuin();
+    caption(e.level === 4 ? '激アツ!!' : 'チャンス!!', { color: e.level === 4 ? '#ffd23a' : '#ff2a3a', size: 120, y: 384, dur: 1.2 }); Snd.sfx.holdRed();
   }
-  await sleep(Math.max(0, lead - (e.group ? (rush ? 300 : 1000) : 0)));
+  await spinNotices(e, Math.max(0, lead - (e.group ? (rush ? 300 : 1000) : 0)));
   if (e.hit && (e.pattern === 'B' || e.pattern === 'F')) return instantHit(e, sym, e.pattern === 'F');
   if (e.group) await groupNotice(e);
   stopReel(0, sym[0]); await sleep(320 * fast);
@@ -2264,7 +2352,8 @@ async function runSpin(e) {
   // ---- リーチ ----
   CUES.reach(); say('リーチ'); L.bg = 'reach'; setLamp('red'); Snd.bgm('reach'); reels[1].speed = 8; shakeCam(0.25, 0.3);
   caption('リーチ!!', { color: '#ff3b5b', size: 130, y: 384, dur: 1.1 });
-  await sleep(rush ? 200 : 700);
+  if (e.mash) await waitMash(rush ? 500 : 1500);
+  else await sleep(rush ? 200 : 700);
   if (!e.sp) {
     reels[1].speed = 12; await sleep(rush ? 250 : 3800);
     if (e.hit) { stopReel(1, sym[1], 2.2); await sleep(rush ? 250 : 500); return bigHit(e, sym, 'freeze'); }
