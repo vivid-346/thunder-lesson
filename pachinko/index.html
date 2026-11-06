@@ -307,12 +307,13 @@ const Snd = (() => {
     miss() { tone(392, 0.25, 'triangle', 0.12); tone(330, 0.25, 'triangle', 0.12, 0.22); tone(262, 0.6, 'triangle', 0.12, 0.44, 200); },
     coin() { tone(1975, 0.05, 'square', 0.05); tone(2637, 0.09, 'square', 0.05, 0.05); },
     open() { [784, 988, 1175].forEach((f, i) => tone(f, 0.1, 'square', 0.08, i * 0.05)); },
-    fanfare() {
+    fanfare(speed = 1) {
       const C = [N(72), N(76), N(79)], F = [N(77), N(81), N(84)], G = [N(79), N(83), N(86)], C2 = [N(84), N(88), N(91)];
-      chord(C, 0.12, 0); chord(C, 0.12, 0.15); chord(C, 0.12, 0.3); chord(C, 0.45, 0.45);
-      chord(F, 0.3, 0.95); chord(G, 0.3, 1.3); chord(C2, 1.6, 1.65, 0.09);
-      [0, 0.45, 0.95, 1.3, 1.65].forEach(t => { kick(t, 0.8); noise(0.9, 0.18, t, 9000, null, 'highpass'); });
-      tone(N(48), 2.4, 'sawtooth', 0.12, 1.65);
+      [[C, 0], [C, .15], [C, .3], [C, .45], [F, .95], [G, 1.3], [C2, 1.65]].forEach(([fs, at], i) => {
+        chord(fs, (i === 6 ? 1.5 : .25) * speed, at * speed);
+        kick(at * speed, .7); noise(.3 * speed, .12, at * speed, 9000, null, 'highpass');
+      });
+      tone(N(48), 1.8 * speed, 'sawtooth', 0.12, 1.65 * speed);
     },
     rushIn() {
       [N(76), N(79), N(83), N(88)].forEach((f, i) => tone(f, 0.18, 'sawtooth', 0.12, i * 0.09));
@@ -1329,6 +1330,43 @@ function drawStorm(c, t) {
 }
 
 /* ---- 図柄・リール ---- */
+// 祝福の音・液晶・ランプで共用する時間軸。短縮版も同じ拍を使う。
+let celebration = null;
+const celebrationAge = () => celebration ? (rt() - celebration.t0) / celebration.speed : 0;
+function drawCelebration(c, t) {
+  const a = celebrationAge();
+  c.save(); c.beginPath(); c.rect(0, 0, LW, LH); c.clip();
+  // メダルは画面の左右だけに流し、中央の図柄を隠さない。
+  for (let i = 0; i < 20; i++) {
+    const x = i % 2 ? 35 + i % 4 * 22 : LW - 35 - i % 4 * 22;
+    const y = (a * (75 + i % 5 * 12) + i * 97) % (LH + 80) - 40;
+    c.save(); c.translate(x + Math.sin(a * 2 + i) * 12, y); c.rotate(a + i);
+    c.scale(.25 + Math.abs(Math.sin(a * 4 + i)) * .75, 1);
+    c.fillStyle = metalGrad(c, -9, 9, MET.gold.stops); c.strokeStyle = '#fff2ae'; c.lineWidth = 2;
+    c.beginPath(); c.ellipse(0, 0, 6, 9, 0, 0, Math.PI * 2); c.fill(); c.stroke(); c.restore();
+  }
+  if (a >= .95) {
+    const p = clamp((a - .95) / .32, 0, 1), y = 585 + 85 * Math.pow(1 - p, 3);
+    c.save(); c.globalAlpha = p; c.strokeStyle = '#ffe48a'; c.shadowColor = '#ffb600'; c.shadowBlur = 18; c.lineWidth = 6;
+    for (const side of [-1, 1]) {
+      c.beginPath(); c.moveTo(512 + side * 200, y);
+      for (let j = 1; j <= 6; j++) c.lineTo(512 + side * (200 + j * 43 * p), y - j * 8 + (j % 2 ? -24 : 12));
+      c.stroke();
+    }
+    c.shadowBlur = 0; fancyText(c, '大当り', 512, y, 136, 'gold', t);
+    const gl = (a - 1.3) / .35;
+    if (gl >= 0 && gl <= 1) {
+      c.save(); c.translate(512, y); c.transform(1, 0, -.08, 1, 0, 0);
+      c.font = `136px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+      const x = -280 + gl * 560, g = c.createLinearGradient(x - 55, 0, x + 55, 0);
+      g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(.5, '#fff'); g.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = g; c.fillText('大当り', 0, 0); c.restore();
+    }
+    c.restore();
+  }
+  if (celebration.rush && a >= 2.05) fancyText(c, 'RUSH確定', 512, 115, 76, 'gold', t);
+  c.restore();
+}
 function drawSymbol(c, n, x, y, s = 1, blur = false, glow = 0) {
   const sp = symSprite(n); c.save(); c.translate(x, y); c.scale(s, s);
   if (glow > 0) {
@@ -1358,7 +1396,17 @@ function drawReels(c, t, mini = false) {
         const y = cy + (r.pos - k) * cell; if (y < -200 || y > LH + 200) continue;
         const centerish = Math.abs(r.pos - k) < 0.5;
         let glow = 0; if (centerish && r.state === 'stop') { if (L.hit) glow = 2; else if (reach && i !== 1) glow = 0.8 + 0.4 * Math.sin(t * 12); }
-        const s = centerish && r.state === 'stop' ? sc * (1 + (L.hit ? Math.sin(t * 10) * 0.04 : 0)) : sc * 0.86;
+        const age = celebrationAge(), beat = age - i * .15;
+        const bounce = celebration && beat >= 0 && beat < .45 ? Math.sin(beat / .45 * Math.PI) * Math.exp(-beat * 3) : 0;
+        const s = centerish && r.state === 'stop' ? sc * (1 + bounce * .18) : sc * .86;
+        if (centerish && celebration) {
+          glow = .4 + bounce;
+          if (age >= .45 && age < .95) {
+            c.save(); c.strokeStyle = '#ffe383'; c.shadowColor = '#ffb800'; c.shadowBlur = 18; c.lineWidth = 5;
+            c.setLineDash([240, 816]); c.lineDashOffset = -(age - .45) * 2112;
+            c.strokeRect(xs[i] - 121, y - 143, 242, 286); c.restore();
+          }
+        }
         if (!centerish && r.state === 'stop') { c.save(); c.globalAlpha = 0.45; drawSymbol(c, symAt(k), xs[i], y, s, false, 0); c.restore(); }
         else drawSymbol(c, symAt(k), xs[i], y, s, blur, glow);
       }
@@ -1441,6 +1489,7 @@ function drawLCD(t) {
   if (L.grey > 0) { c.save(); c.globalCompositeOperation = 'saturation'; c.globalAlpha = L.grey; c.fillStyle = '#808080'; c.fillRect(0, 0, LW, LH); c.globalCompositeOperation = 'source-over'; c.globalAlpha = L.grey * 0.45; c.fillStyle = '#000'; c.fillRect(0, 0, LW, LH); c.restore(); }
   if (L.crack) drawCrack(c);
   L.sh = lerp(L.sh, L.shT, 0.2); if (L.sh > 0.01) drawShutter(c, L.sh, t);
+  if (celebration) drawCelebration(c, t);
   drawCaptions(c, t);
   drawHolds(c, t);
   if (L.signal) drawSignal(c, t);
@@ -1450,11 +1499,16 @@ function drawLCD(t) {
     c.strokeStyle = metalGrad(c, -32, 32, MET.gold.stops); c.lineWidth = 4; c.strokeRect(-14, -32, 196, 64); c.restore();
     c.save(); c.globalAlpha = Math.sin(t * 10) > -0.4 ? 1 : 0.6; fancyText(c, '右打ち ▶', LW - 100, 56, 42, 'silver', t); c.restore();
   }
-  if (L.hit && !L.round) { // 10R 1500
+  if (L.hit && !L.round && (!celebration || celebrationAge() >= 1.65)) { // 10R 1500
+    c.save();
+    const p = celebration ? clamp((celebrationAge() - 1.65) / .25, 0, 1) : 1;
+    const scale = 1 + .65 * Math.pow(1 - p, 2);
+    c.translate(512, 691); c.scale(scale, scale); c.translate(-(LW - 142), -(LH - 150));
     c.save(); c.translate(LW - 142, LH - 150); c.transform(1, 0, -0.2, 1, 0, 0);
     const g = c.createLinearGradient(0, -32, 0, 32); g.addColorStop(0, '#6a0008'); g.addColorStop(1, '#1a0002'); c.fillStyle = g; c.fillRect(-122, -32, 252, 64);
     c.strokeStyle = metalGrad(c, -32, 32, MET.gold.stops); c.lineWidth = 5; c.strokeRect(-122, -32, 252, 64); c.restore();
     fancyText(c, '10R 1500', LW - 136, LH - 147, 44, 'gold', t);
+    c.restore();
   }
   if (L.push) {
     drawPushPrompt(c, t);
@@ -1575,7 +1629,15 @@ function updateLamps(dt, t) {
   const c = new THREE.Color(), m = lampMode.mode;
   for (let i = 0; i < LAMP_N; i++) {
     const f = i / LAMP_N, sp = lampSprites[i]; let o = 0;
-    if (m === 'rainbow') { c.setHSL((f * 3 + t * 0.8) % 1, 1, 0.55); o = 0.85; }
+    if (m === 'celebration' && celebration) {
+      const age = celebrationAge(), beats = [0, .15, .3, .45, .95, 1.3, 1.65];
+      const since = age - beats.filter(b => b <= age).pop();
+      if (age < .45) c.setRGB(1, 1, 1);
+      else if (age < 1.65) c.setRGB(1, .72, .12);
+      else c.setHSL((f * 2 - age * .6 + 10) % 1, 1, .58);
+      o = .45 + .55 * Math.exp(-since * 9);
+    }
+    else if (m === 'rainbow') { c.setHSL((f * 3 + t * 0.8) % 1, 1, 0.55); o = 0.85; }
     else if (m === 'red') { c.set(0xff1020); o = Math.sin(t * 20) > 0 ? 0.95 : 0.12; }
     else if (m === 'gold') { c.setRGB(1, 0.75, 0.2); o = 0.6 + 0.35 * Math.sin(t * 15 + i); }
     else if (m === 'rush') { const on = ((i + Math.floor(t * 18)) % 6) < 3; c.setRGB(1, on ? 0.55 : 0.1, 0.05); o = on ? 0.85 : 0.18; }
@@ -1674,7 +1736,7 @@ async function impactSlam(sym, gold = false) {
   await vDrop(gold); L.battle = null;
   if (sym) reels.forEach((r, i) => { r.state = 'stop'; let P = Math.round(r.pos); while (symAt(P) !== sym[i]) P++; r.pos = P; });
   whiteFlash(500); Snd.sfx.impact(); shakeCam(1.6, 0.9); vibrate([90, 40, 260]);
-  spawnBolt(gold ? '#ffc830' : '#ff2a20', 6, 4); setLamp('white'); setTimeout(() => setLamp(gold ? 'gold' : 'rainbow'), 240);
+  spawnBolt(gold ? '#ffc830' : '#ff2a20', 6, 4); setLamp('white'); setTimeout(() => { if (lampMode.mode === 'white') setLamp(gold ? 'gold' : 'rainbow'); }, 240);
   setTimeout(vRise, 1100);
 }
 async function instantHit(e, sym, hyper) {
@@ -1706,12 +1768,12 @@ async function bigHit(e, sym, pre = 'freeze', opt = {}) {
   // 確定：図柄をしっかり見せてから祝福
   L.hit = true; L.bg = 'jackpot'; L.signal = false; L.grey = 0;
   stats.hits++; stats.since = 0; rainbowRing.visible = false; bloomBoost = 0;
-  await sleep(260);
-  Snd.sfx.fanfare(); say('大当り！！', 1.4);
-  const hold = opt.fast ? 1300 : e.pattern === 'A' ? 3800 : 3000; // 揃った図柄を遮らずに見せる時間
-  caption('大当り', { style: 'gold', size: 150, y: 612, dur: hold / 1000 });
+  const hold = opt.fast || state.mode === 'rush' ? 1250 : 3600;
+  L.captions = []; lampFlash = null;
+  celebration = { t0: rt(), speed: hold / 3600, rush: e.rush && e.oddShow };
+  setLamp('celebration'); Snd.sfx.fanfare(celebration.speed); say('大当り！！', 1.4);
   await sleep(hold);
-  if (e.rush && e.oddShow) { Snd.sfx.rushIn(); spawnBolt('#ffc830', 4, 3); edgeFlash('#ffc830', 800); caption('RUSH確定', { style: 'gold', size: 150, y: 400, dur: 1.6, sub: '奇数図柄で大当り' }); await sleep(1700); }
+  celebration = null; setLamp('rainbow');
   Snd.bgm('jackpot'); rainbowRing.visible = false; bloomBoost = 0;
   await runRounds();
 
